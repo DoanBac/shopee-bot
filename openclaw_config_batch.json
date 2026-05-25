@@ -1,0 +1,28 @@
+[
+  {
+    "path": "browser.defaultProfile",
+    "value": "edgeremote"
+  },
+  {
+    "path": "agents.defaults.model",
+    "value": {
+      "primary": "google/gemini-3.1-pro-preview"
+    }
+  },
+  {
+    "path": "browser.profiles.edge",
+    "value": {
+      "driver": "existing-session",
+      "attachOnly": true,
+      "userDataDir": "C:\\Users\\doanbacremote\\AppData\\Local\\Microsoft\\Edge\\User Data",
+      "color": "#00AA00"
+    }
+  },
+  {
+    "path": "browser.profiles.edgeremote",
+    "value": {
+      "cdpUrl": "http://127.0.0.1:9222",
+      "color": "#00AA00"
+    }
+  }
+]

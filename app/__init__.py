@@ -1,0 +1,2 @@
+"""Shopee bot application package."""
+
