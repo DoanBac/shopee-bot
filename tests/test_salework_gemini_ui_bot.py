@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from salework_gemini_ui_bot import (
+    PRODUCT_VIDEO_URLS,
     answer_from_product_description,
     attachment_related_reason,
     extract_dimension_answer,
@@ -177,6 +178,21 @@ def test_safety_blocks_sending_customer_to_description_or_live():
     assert safety_block_reason("Dạ mình xem live của shop để các bạn đo trực tiếp giúp em nha") is not None
 
 
+def test_safety_blocks_generic_youtube_channel_link():
+    assert (
+        safety_block_reason(
+            "Dạ mình xem video hướng dẫn của shop ở đây giúp em nha: https://www.youtube.com/@TagoFurniture2412"
+        )
+        is not None
+    )
+    assert (
+        safety_block_reason(
+            "Dạ mẫu này mã ND40, mình xem video hướng dẫn lắp đúng mẫu ở đây giúp em nha: https://www.youtube.com/watch?v=WgSEC9Wccno"
+        )
+        is None
+    )
+
+
 def test_safety_blocks_return_refund_terms():
     assert safety_block_reason("Dạ mình vào Shopee bấm trả hàng hoàn tiền giúp em ạ") is not None
     assert safety_block_reason("Dạ Shopee sẽ xử lý hoàn tiền cho mình ạ") is not None
@@ -298,6 +314,8 @@ def test_video_request_detection_common_customer_phrases():
         assert decision is not None
         assert decision.action == "send"
         assert decision.category == "assembly_video"
+        assert "https://www.youtube.com/watch?v=O2sUXRiuM5U" in decision.reply
+        assert "@TagoFurniture2412" not in decision.reply
 
 
 def test_nd90_video_request_uses_direct_product_video():
@@ -313,6 +331,28 @@ def test_nd90_video_request_uses_direct_product_video():
     assert "@TagoFurniture2412" not in decision.reply
 
 
+def test_nd40_video_request_uses_direct_product_video():
+    decision = quick_decision(
+        "shop cho em xin video hướng dẫn lắp",
+        "Thông tin đơn hàng\nKệ sách góc tường nhiều tầng có hậu TAGO ND40\nGiá : 258.000đ",
+    )
+
+    assert decision is not None
+    assert decision.action == "send"
+    assert decision.category == "assembly_video"
+    assert "https://www.youtube.com/watch?v=WgSEC9Wccno" in decision.reply
+    assert "@TagoFurniture2412" not in decision.reply
+
+
+def test_all_product_video_urls_are_direct_watch_links():
+    assert PRODUCT_VIDEO_URLS
+    for code, url in PRODUCT_VIDEO_URLS.items():
+        assert code.startswith("ND")
+        assert url.startswith("https://www.youtube.com/watch?v=")
+        assert "/@" not in url
+        assert "playlist" not in url
+
+
 def test_nd90_self_assembly_uses_direct_product_video():
     decision = quick_decision(
         "mẫu này có tự lắp không",
@@ -323,6 +363,25 @@ def test_nd90_self_assembly_uses_direct_product_video():
     assert decision.action == "send"
     assert decision.category == "self_assembly"
     assert "https://www.youtube.com/watch?v=HCU50Y-7tIg" in decision.reply
+
+
+def test_unknown_product_video_request_is_human_only():
+    decision = quick_decision(
+        "shop gửi mình video hướng dẫn lắp với",
+        "Thông tin đơn hàng\nKệ mới chưa có video TAGO ND999\nGiá : 299.000đ",
+    )
+
+    assert decision is not None
+    assert decision.action == "skip"
+    assert decision.category == "assembly_video_missing"
+
+
+def test_video_request_without_product_code_is_human_only():
+    decision = quick_decision("shop gửi mình video hướng dẫn lắp với", "Thông tin đơn hàng\nKệ sách")
+
+    assert decision is not None
+    assert decision.action == "skip"
+    assert decision.category == "assembly_video_missing"
 
 
 def test_send_reference_preview_opens_only_for_recent_video_context():

@@ -30,9 +30,66 @@ STATE_PATH = LOG_DIR / "salework_gemini_bot_state.json"
 URL = "https://chat.salework.net/conversations"
 MAX_REPLY_CHARS = 280
 DEFAULT_LOOKUP_PROFILE = os.getenv("OPENCLAW_LOOKUP_BROWSER_PROFILE", "edgelookup")
-YOUTUBE_GUIDE_URL = "https://www.youtube.com/@TagoFurniture2412"
 PRODUCT_VIDEO_URLS = {
+    "ND01": "https://www.youtube.com/watch?v=01z-mPb9CzE",
+    "ND02": "https://www.youtube.com/watch?v=fXQew-X6w6o",
+    "ND04": "https://www.youtube.com/watch?v=CvxBT4Ytc-E",
+    "ND05": "https://www.youtube.com/watch?v=K0QKfIGIens",
+    "ND06": "https://www.youtube.com/watch?v=-gZiU8nY3z0",
+    "ND09": "https://www.youtube.com/watch?v=KWgrC0_5Mio",
+    "ND10": "https://www.youtube.com/watch?v=PoQSkdmOA4M",
+    "ND11": "https://www.youtube.com/watch?v=Egg7pJymF2Q",
+    "ND13": "https://www.youtube.com/watch?v=Egg7pJymF2Q",
+    "ND14": "https://www.youtube.com/watch?v=rvEVlUGYDi8",
+    "ND15": "https://www.youtube.com/watch?v=3b3QeEu1Yf0",
+    "ND16": "https://www.youtube.com/watch?v=UbMWMcN9Wnk",
+    "ND18": "https://www.youtube.com/watch?v=z_L05nAgzSs",
+    "ND21": "https://www.youtube.com/watch?v=Uz78-_tDB7g",
+    "ND22": "https://www.youtube.com/watch?v=R6Eufugo-vs",
+    "ND24": "https://www.youtube.com/watch?v=S9AboTPiI3I",
+    "ND26": "https://www.youtube.com/watch?v=KlF0v8pzCto",
+    "ND30": "https://www.youtube.com/watch?v=pKOLWdpx-F0",
+    "ND31": "https://www.youtube.com/watch?v=9AXFvjuDm1g",
+    "ND36": "https://www.youtube.com/watch?v=419b-wZM7MI",
+    "ND37": "https://www.youtube.com/watch?v=jwZdMARogaE",
+    "ND38": "https://www.youtube.com/watch?v=O2sUXRiuM5U",
+    "ND40": "https://www.youtube.com/watch?v=WgSEC9Wccno",
+    "ND41": "https://www.youtube.com/watch?v=nWmSeKR6Tks",
+    "ND44": "https://www.youtube.com/watch?v=0bDhqDLEu88",
+    "ND47": "https://www.youtube.com/watch?v=GTRNDgFwi_A",
+    "ND50": "https://www.youtube.com/watch?v=xo1ZbBYrujE",
+    "ND51": "https://www.youtube.com/watch?v=pSL77EAWSos",
+    "ND52": "https://www.youtube.com/watch?v=gNTIe8dmaNI",
+    "ND53": "https://www.youtube.com/watch?v=eGnqasoUElY",
+    "ND55": "https://www.youtube.com/watch?v=mz_0bOB6Tyg",
+    "ND56": "https://www.youtube.com/watch?v=ChvrPdub2wM",
+    "ND58": "https://www.youtube.com/watch?v=sY8W5W1pU8o",
+    "ND59": "https://www.youtube.com/watch?v=pjYvKGJb38E",
+    "ND61": "https://www.youtube.com/watch?v=HJxbqEEQIJI",
+    "ND62": "https://www.youtube.com/watch?v=uDFtYCiouAE",
+    "ND63": "https://www.youtube.com/watch?v=wKNW2R-grGc",
+    "ND64": "https://www.youtube.com/watch?v=prl-lS3X-0o",
+    "ND65": "https://www.youtube.com/watch?v=jEK4mVKT-NQ",
+    "ND67": "https://www.youtube.com/watch?v=IzqEqvyeuEQ",
+    "ND68": "https://www.youtube.com/watch?v=f3kQBDht6VM",
+    "ND69": "https://www.youtube.com/watch?v=AaTKl6DWuHo",
+    "ND71": "https://www.youtube.com/watch?v=v5ZQn2vOAaw",
+    "ND72": "https://www.youtube.com/watch?v=gZJXF83uVdk",
+    "ND76": "https://www.youtube.com/watch?v=UuEYqSBh6wA",
+    "ND77": "https://www.youtube.com/watch?v=poK6w8jeCPE",
+    "ND78": "https://www.youtube.com/watch?v=Zk59P0iHKS8",
+    "ND79": "https://www.youtube.com/watch?v=pdfgf-GX6KY",
+    "ND80": "https://www.youtube.com/watch?v=imFfd-3H9DQ",
+    "ND82": "https://www.youtube.com/watch?v=HEL6tIM2zJE",
+    "ND83": "https://www.youtube.com/watch?v=hjajca_yQNQ",
+    "ND85": "https://www.youtube.com/watch?v=sxbhTFv8mts",
+    "ND86": "https://www.youtube.com/watch?v=43uRI76H6dA",
+    "ND87": "https://www.youtube.com/watch?v=uEiimzs30tI",
+    "ND88": "https://www.youtube.com/watch?v=FHbl79rKhR8",
     "ND90": "https://www.youtube.com/watch?v=HCU50Y-7tIg",
+    "ND92": "https://www.youtube.com/watch?v=jEK4mVKT-NQ",
+    "ND93": "https://www.youtube.com/watch?v=Pe8imIs9_Bg",
+    "ND94": "https://www.youtube.com/watch?v=qFfh4hK-3Es",
 }
 LOOKUP_NEEDED_CATEGORIES = {
     "dimension_visible_but_unknown",
@@ -297,8 +354,8 @@ REPLY_VARIATIONS: dict[str, list[str]] = {
         "Dạ mẫu này dùng gỗ MDF phủ Melamine, phù hợp nhu cầu sinh hoạt cơ bản ạ.",
     ],
     "self_assembly": [
-        f"Dạ sản phẩm là dạng tự lắp ạ. Mình xem video hướng dẫn của shop ở đây giúp em nha: {YOUTUBE_GUIDE_URL}",
-        f"Dạ bên em có video hướng dẫn lắp trên kênh YouTube của shop ạ: {YOUTUBE_GUIDE_URL}",
+        "Dạ sản phẩm là dạng tự lắp ạ. Nếu mình cần video hướng dẫn, em sẽ gửi đúng video của mẫu này để mình lắp cho dễ ạ.",
+        "Dạ mẫu này là dạng tự lắp ạ. Mình cần video thì bên em sẽ gửi đúng video của mẫu này cho mình ạ.",
     ],
 }
 
@@ -796,6 +853,8 @@ def key_for(row: Row) -> str:
 
 def safety_block_reason(reply: str) -> str | None:
     text = norm(reply)
+    if "youtube.com/@" in reply.lower() or "youtube.com/channel/" in reply.lower():
+        return "generic YouTube channel link"
     for pattern in HARD_BLOCK_PATTERNS:
         if re.search(pattern, text):
             if "youtube.com" in text or "youtu.be" in text:
@@ -1062,7 +1121,7 @@ def product_video_url(code: str | None) -> str | None:
     return PRODUCT_VIDEO_URLS.get((code or "").upper())
 
 
-def assembly_video_reply(code: str | None, *, self_assembly: bool = False) -> str:
+def assembly_video_reply(code: str | None, *, self_assembly: bool = False) -> str | None:
     direct_url = product_video_url(code)
     if direct_url and code:
         if self_assembly:
@@ -1070,9 +1129,7 @@ def assembly_video_reply(code: str | None, *, self_assembly: bool = False) -> st
                 f"Dạ mẫu này là dạng tự lắp ạ. Mình xem video hướng dẫn lắp mẫu {code} ở đây giúp em nha: {direct_url}"
             )
         return f"Dạ mẫu này mã {code}, mình xem video hướng dẫn lắp đúng mẫu ở đây giúp em nha: {direct_url}"
-    if code:
-        return f"Dạ mẫu này mã {code}, mình xem video hướng dẫn của shop ở đây giúp em nha: {YOUTUBE_GUIDE_URL}"
-    return f"Dạ mình xem video hướng dẫn của shop ở đây giúp em nha: {YOUTUBE_GUIDE_URL}"
+    return None
 
 
 def extract_product_code(text: str) -> str | None:
@@ -1385,6 +1442,9 @@ def quick_decision(
         (is_send_reference_request(t) or is_short_followup_request(t)) and context_video_request
     ):
         reply = assembly_video_reply(code)
+        if not reply:
+            reason = f"missing direct assembly video for {code}" if code else "missing product code for direct assembly video"
+            return Decision("skip", "", "assembly_video_missing", reason, 0.0)
         return Decision("send", reply, "assembly_video", "assembly/video request", 0.9)
 
     if is_send_reference_request(t):
@@ -1409,15 +1469,17 @@ def quick_decision(
         return Decision("send", pick_variant("material_wood", s), "material_wood", "material question", 0.85)
 
     if any(word in t for word in ["tu lap", "tu rap", "lap san chua", "co lap san chua", "co lap san khong", "co lap san k"]):
-        if product_video_url(code):
+        reply = assembly_video_reply(code, self_assembly=True)
+        if reply:
             return Decision(
                 "send",
-                assembly_video_reply(code, self_assembly=True),
+                reply,
                 "self_assembly",
                 "self-assembly question with product video",
                 0.88,
             )
-        return Decision("send", pick_variant("self_assembly", s), "self_assembly", "self-assembly question", 0.85)
+        reason = f"missing direct assembly video for {code}" if code else "missing product code for direct assembly video"
+        return Decision("skip", "", "assembly_video_missing", reason, 0.0)
 
     if any(word in t for word in ["goc", "bo tron", "nhon"]):
         return Decision(
@@ -1518,7 +1580,7 @@ async def gemini_decision(customer_text: str, chat_text: str, prompt_text: str) 
                         "Khong xin lai ma san pham/ma mau neu Salework da hien ro san pham. "
                         "Khong bao khach tu xem mo ta san pham, xem live, hoac tu check thong tin san pham; phai tu doc san pham trong Salework. "
                         "Neu khong co so do/thong tin san pham chac chan, action='skip' de nguoi shop kiem tra. "
-                        "Duoc gui link YouTube huong dan lap san pham cua shop neu khach hoi video/huong dan lap. "
+                        "Chi duoc gui link YouTube video truc tiep dung ma san pham neu khach hoi video/huong dan lap; khong gui link kenh chung. "
                         "Cau tra loi phai mem, co 'Da', xung 'em', goi khach la 'minh' hoac 'anh/chi'."
                     )
                 }
@@ -1886,6 +1948,7 @@ async def process_once(
                 "attachment",
                 "private_payment",
                 "complaint_defect",
+                "assembly_video_missing",
             }
             if not args.dry_run:
                 if not transient:

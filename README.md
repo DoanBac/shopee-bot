@@ -55,7 +55,7 @@ Get-Content .\openclaw-logs\salework_gemini_bot.stderr.log -Tail 80 -Encoding UT
 
 Bot chỉ được tự trả lời các case an toàn:
 
-- Khách xin video/hướng dẫn lắp sản phẩm.
+- Khách xin video/hướng dẫn lắp sản phẩm, nhưng chỉ gửi link video trực tiếp đúng mã sản phẩm.
 - Khách hỏi kích thước/thông tin có trong mô tả sản phẩm.
 - Một số câu thông tin sản phẩm đơn giản đã có rule chắc chắn.
 
