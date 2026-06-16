@@ -290,6 +290,7 @@ def test_video_request_detection_common_customer_phrases():
         "B gửi mình hướng dẫn lắp nhé",
         "Shop có video hướng dẫn lắp kệ không",
         "có hdsd để lắp không ạ shop ơiiii",
+        "cho mình xin link lắp kệ",
     ]:
         decision = quick_decision(message, "Thông tin đơn hàng\nKệ sách tổ ong ND38")
 
