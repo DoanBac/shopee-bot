@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 import httpx
 from dotenv import load_dotenv
@@ -27,6 +28,14 @@ PROMPT_PATH = ROOT / "data" / "salework_ai_prompt.txt"
 LOG_DIR = ROOT / "openclaw-logs"
 STATE_PATH = LOG_DIR / "salework_gemini_bot_state.json"
 URL = "https://chat.salework.net/conversations"
+MAX_REPLY_CHARS = 280
+DEFAULT_LOOKUP_PROFILE = os.getenv("OPENCLAW_LOOKUP_BROWSER_PROFILE", "edgelookup")
+YOUTUBE_GUIDE_URL = "https://www.youtube.com/@TagoFurniture2412"
+LOOKUP_NEEDED_CATEGORIES = {
+    "dimension_visible_but_unknown",
+    "dimension_no_product_context",
+    "product_info_lookup_needed",
+}
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -50,6 +59,12 @@ SYSTEM_PREVIEWS = {
     "[Thu âm]",
     "[Ghi âm]",
     "[GIF]",
+}
+
+ATTACHMENT_MARKERS = SYSTEM_PREVIEWS | {
+    "[Image]",
+    "[Photo]",
+    "[Attachment]",
 }
 
 # Patterns that should NEVER appear in a sent reply. They indicate the bot
@@ -80,20 +95,90 @@ HARD_BLOCK_PATTERNS = (
     r"gửi bù",
     r"ho tro lai.*chi phi",
     r"hỗ trợ lại.*chi phí",
+    # Cost/fee/payment amount conversations are human-only.
+    r"\bphi\b",
+    r"\bphí\b",
+    r"\bchi phi\b",
+    r"\bchi phí\b",
+    r"\btiền\b",
+    r"\bbao nhieu tien\b",
+    r"\btien (hang|ship|van chuyen|hoan|gui|lai|mat)\b",
+    r"\bbao gia\b",
+    r"\bgia\b.*\b(bao nhieu|bn|sao|nao|sp|san pham|nay|ko|khong)\b",
+    r"\bship\b.*\b(cao|dat|mac|phi|phí|tien|tiền)\b",
+    r"\bvan chuyen\b.*\b(phi|phí|tien|tiền|bao nhieu)\b",
     r"\bphi\b.*\bho tro\b",
     r"\bphí\b.*\bhỗ trợ\b",
     r"se ho tro.*(phi|chi phi|tien|ship|van chuyen|gui|bo sung|hoan|doi|den bu)",
     r"(ben em|shop) se ho tro.*(phi|chi phi|tien|ship|van chuyen|gui|bo sung|hoan|doi|den bu)",
     r"se co gang gui",
     r"sẽ cố gắng gửi",
+    # Any screw/accessory-related outbound message is human-only.
+    r"\boc\b",
+    r"\bốc\b",
+    r"\bvit\b",
+    r"\bvít\b",
+    r"\btua vit\b",
+    r"\btua vít\b",
+    r"\blo khoan\b",
+    r"\blỗ khoan\b",
+    r"\bkhoan san\b",
+    r"\bkhoan sẵn\b",
+    r"\bphu kien\b",
+    r"\bphụ kiện\b",
+    r"\bgoi phu kien\b",
+    r"\bgói phụ kiện\b",
+    r"\bgoi oc\b",
+    r"\bgói ốc\b",
+    r"\bthieu phu kien\b",
+    r"\bthiếu phụ kiện\b",
+    # Missing panels/parts/items are human-only.
+    r"\bthieu hang\b",
+    r"\bthiếu hàng\b",
+    r"\bthieu tam\b",
+    r"\bthiếu tấm\b",
+    r"\bthieu ngan\b",
+    r"\bthiếu ngăn\b",
+    r"\bthieu chi tiet\b",
+    r"\bthiếu chi tiết\b",
+    r"\bthieu bo phan\b",
+    r"\bthiếu bộ phận\b",
+    r"\bthieu mon\b",
+    r"\bthiếu món\b",
+    r"\bgiao thieu\b",
+    r"\bgiao thiếu\b",
     r"gui don oc",
     r"gửi đơn ốc",
+    # Return/refund cases are human-only. Do not let Gemini draft a Shopee
+    # return/refund instruction after the case has been opened.
+    r"\btra hang\b",
+    r"\btrả hàng\b",
+    r"\bhoan hang\b",
+    r"\bhoàn hàng\b",
+    r"\bhoan tien\b",
+    r"\bhoàn tiền\b",
+    r"\bdoi tra\b",
+    r"\bđổi trả\b",
+    r"\btra hoan\b",
+    r"\btrả hoàn\b",
+    r"\brefund\b",
+    r"\breturn\b",
     r"hoan lai",
     r"hoàn lại",
     r"cho em xin.*ma",
     r"gui.*ma.*san pham",
     r"ma san pham cu the",
     r"ma mau dang chon",
+    # Do not push product lookup work back to the customer. The bot must use
+    # visible Salework product context or skip for a human to check.
+    r"xem.*mo ta",
+    r"phan mo ta",
+    r"muc mo ta",
+    r"mo ta san pham",
+    r"tham khao.*mo ta",
+    r"xem chi tiet.*(san pham|shopee|app)",
+    r"xem.*live",
+    r"live cua shop",
     # Hard refunds/commitments we must never auto-promise.
     r"hoan tien (cho|lai|cho ban|cho minh)",
     r"den bu",
@@ -184,40 +269,9 @@ REPLY_VARIATIONS: dict[str, list[str]] = {
         "Dạ em đây mình ơi, mình cần em hỗ trợ gì ạ?",
         "Dạ vâng ạ, em đang lắng nghe. Mình có vấn đề gì cần em hỗ trợ ạ?",
     ],
-    "policy_payment": [
-        "Dạ để đúng quy định Shopee, phần hỗ trợ mình thao tác trực tiếp trong đơn trên Shopee giúp em nha. Shop không xử lý qua kênh riêng trong chat ạ, có gì vướng mình nhắn em hỗ trợ tiếp nha.",
-        "Dạ theo quy định của Shopee, mọi hỗ trợ mình thao tác trong đơn trên Shopee giúp em ạ. Bên em không nhận xử lý qua kênh riêng đâu nha, có gì mình nhắn em hỗ trợ tiếp ạ.",
-        "Dạ phần này mình thao tác trên Shopee giúp em theo đúng quy định của sàn nha. Shop không hỗ trợ qua kênh riêng trong chat ạ, mình cần gì cứ nhắn vào đây em hỗ trợ tiếp ạ.",
-    ],
-    "missing_screws_first": [
-        "Dạ em xin lỗi mình ạ. Mình kiểm tra kỹ giúp em trong thùng, bọc xốp và các khe của tấm gỗ xem túi ốc có bị lẫn không nha, túi này nhỏ nên đôi khi dễ sót ạ. Nếu vẫn không thấy, mình chụp giúp em ảnh phần hàng/phụ kiện nhận được để em kiểm tra hỗ trợ cho mình nhé.",
-        "Dạ em xin lỗi mình nhiều ạ. Túi ốc nhỏ nên hay bị lẫn trong bọc xốp hoặc các khe của tấm gỗ, mình kiểm tra kỹ lại một lần giúp em nha. Trường hợp vẫn không tìm thấy, mình chụp giúp em phần hàng và phụ kiện đang có để em kiểm tra hỗ trợ cho mình ạ.",
-        "Dạ em xin lỗi mình ạ. Mình kiểm tra kỹ một lần nữa giúp em trong thùng và các bọc xốp nha, túi ốc khá nhỏ nên đôi khi bị lẫn ạ. Nếu vẫn không thấy, mình chụp giúp em ảnh hiện trạng để em ghi nhận và kiểm tra hỗ trợ cho mình ạ.",
-    ],
-    "missing_screws_confirmed": [
-        "Dạ em xin lỗi mình nhiều ạ. Vậy em ghi nhận là mình đã kiểm tra kỹ nhưng không thấy gói ốc, em sẽ note lại thiếu phụ kiện để kiểm tra với kho và hướng hỗ trợ cho mình. Mình giữ giúp em thùng/bọc hàng và ảnh phần phụ kiện hiện có nha.",
-        "Dạ em xin lỗi mình ạ. Vậy em note lại trường hợp thiếu phụ kiện này để kiểm tra lại với kho và hỗ trợ cho mình ạ. Mình giữ giúp em phần thùng và bọc hàng, kèm ảnh phụ kiện đang có để em đối chiếu nha.",
-    ],
-    "tight_screws": [
-        "Dạ mình dùng tua vít bake đầu chữ + đúng size, đặt vít thẳng, ấn mạnh tay rồi vặn từ từ giúp em nha. Bên em làm lỗ nhỏ để vít ăn gỗ chắc hơn nên lúc đầu sẽ hơi cứng; mình có thể xoáy thử 1-2 vòng rồi vặn lại, hoặc chà nhẹ đầu vít vào xà phòng/sáp nến cho trơn hơn ạ.",
-        "Dạ mình dùng tua vít bake (đầu chữ +) đúng size, đặt vít thẳng và vặn từ từ là vào được ạ. Bên em làm lỗ nhỏ để vít bám chắc nên ban đầu sẽ hơi cứng; mình có thể xoáy thử 1-2 vòng cho mòn lỗ, hoặc chà nhẹ đầu vít vào sáp nến/xà phòng cho trơn hơn nha.",
-    ],
-    "defect_first_step": [
-        "Dạ em xin lỗi mình nhiều ạ. Mình chụp hoặc quay giúp em rõ tình trạng sản phẩm và toàn cảnh phần hàng đang gặp vấn đề, kèm ảnh thùng/tem vận chuyển nếu còn giữ. Em kiểm tra lại để hỗ trợ hướng xử lý cho mình nha.",
-        "Dạ em xin lỗi mình ạ. Mình quay hoặc chụp giúp em một đoạn rõ tình trạng sản phẩm, toàn cảnh phần hàng đang gặp vấn đề và phần thùng/tem vận chuyển nếu còn giữ giúp em ạ. Em sẽ kiểm tra và hướng hỗ trợ tiếp cho mình nha.",
-        "Dạ em xin lỗi mình nha. Mình chụp giúp em ảnh rõ phần hàng đang gặp vấn đề, kèm ảnh thùng và tem vận chuyển nếu vẫn còn giúp em ạ. Em ghi nhận lại và kiểm tra hướng hỗ trợ cho mình ngay nha.",
-    ],
-    "shipping_in_transit": [
-        "Dạ em xin lỗi mình nha. Đơn đang ở trạng thái giao/bên vận chuyển xử lý, em sẽ báo sàn kiểm tra lại phía vận chuyển cho mình. Mình giúp em để ý điện thoại, có cập nhật mới em báo lại ngay ạ.",
-        "Dạ em xin lỗi mình nhiều ạ. Đơn hiện đang được bên vận chuyển xử lý, em sẽ note lại để báo sàn rà phía vận chuyển cho mình. Mình để ý điện thoại giúp em, có thông tin mới em cập nhật ngay nha.",
-    ],
-    "shipping_no_status": [
-        "Dạ em xin lỗi mình nha. Mình chụp giúp em trạng thái đơn trên Shopee hoặc gửi mã đơn để em kiểm tra lại và hối bên vận chuyển/kho cho mình ạ.",
-        "Dạ em xin lỗi mình ạ. Mình giúp em chụp trạng thái đơn hoặc nhắn em mã đơn để em kiểm tra lại và hối phía kho/vận chuyển hỗ trợ mình sớm nha.",
-    ],
     "product_corner": [
-        "Dạ mẫu bàn này thiết kế góc vuông, cạnh được xử lý nhẵn nên không sắc tay, nhưng không phải kiểu bo tròn lớn hẳn ạ. Nếu nhà có bé nhỏ thì mình có thể gắn thêm miếng bo silicon bên ngoài cho an toàn hơn nha.",
-        "Dạ mẫu bàn này phần cạnh được xử lý nhẵn nên cầm không bị sắc tay, nhưng vẫn là dạng góc vuông chứ không bo tròn lớn ạ. Nếu nhà có em bé, mình có thể gắn thêm miếng bo silicon bên ngoài cho yên tâm hơn nha.",
+        "Dạ mẫu bàn này cạnh xử lý nhẵn, dạng góc vuông chứ không bo tròn lớn ạ.",
+        "Dạ mẫu này là góc vuông, cạnh được xử lý nhẵn để dùng đỡ sắc tay ạ.",
     ],
     "thickness_table": [
         "Dạ mẫu bàn này mặt MDF dày 15mm ạ. Mình dùng học tập, làm việc, để laptop/màn hình và đồ sinh hoạt bình thường là ổn nha.",
@@ -235,28 +289,13 @@ REPLY_VARIATIONS: dict[str, list[str]] = {
         "Dạ mẫu bàn kích thước 1m2 x 60cm nặng tầm 6-7kg ạ.",
         "Dạ bàn 1m2 x 60cm bên em nặng khoảng 6-7kg ạ.",
     ],
-    "delivery_time": [
-        "Dạ thời gian giao hệ thống Shopee sẽ hiển thị theo địa chỉ của mình ạ. Bên em đóng gói kỹ và bàn giao đơn vị vận chuyển sớm nhất nha mình.",
-        "Dạ thời gian giao hàng hệ thống Shopee tính theo địa chỉ của mình ạ, mình xem dự kiến giao trong app nha. Bên em luôn cố gắng đóng gói kỹ và gửi đơn vị vận chuyển sớm nhất ạ.",
-    ],
-    "shipping_fee": [
-        "Dạ phí vận chuyển bên Shopee tính tự động theo địa chỉ của mình ạ. Mình tham khảo thêm gói Shopee VIP (khoảng 29k/tháng), thường có nhiều voucher freeship cho đơn cồng kềnh, đơn giá trị cao còn được giảm thêm nữa nha.",
-        "Dạ phí vận chuyển bên Shopee sẽ tính theo địa chỉ giao của mình ạ. Mình tham khảo gói Shopee VIP để nhận thêm voucher freeship cho đơn cồng kềnh nha.",
-    ],
     "material_wood": [
-        "Dạ các mẫu nội thất bên em đều làm từ gỗ MDF chất lượng tốt, có lớp chống ẩm và chống trầy ạ. Gỗ dày dặn, chắc chắn, mình dùng thoải mái nha.",
-        "Dạ sản phẩm bên em là gỗ MDF chất lượng, có phủ lớp chống ẩm và chống trầy nên rất bền và sạch ạ. Mình yên tâm sử dụng nha.",
+        "Dạ sản phẩm bên em là gỗ MDF phủ Melamine, bề mặt sạch và dễ lau ạ.",
+        "Dạ mẫu này dùng gỗ MDF phủ Melamine, phù hợp nhu cầu sinh hoạt cơ bản ạ.",
     ],
     "self_assembly": [
-        "Dạ khi nhận hàng mình tự lắp ráp giúp em nha. Bên em có video hướng dẫn từng bước, xem một chút là mình tự lắp được ngay, rất đơn giản ạ.",
-        "Dạ sản phẩm bên em là dạng lắp ráp, mình tự hoàn thiện khi nhận hàng giúp em nha. Bên em có video hướng dẫn từng bước trên kênh YouTube của shop, mình xem theo là làm được ngay ạ.",
-    ],
-    "screwdriver": [
-        "Dạ bên em đã khoan sẵn lỗ và tặng kèm ốc vít rồi ạ, mình chỉ cần chuẩn bị một chiếc tua vít là lắp được nha.",
-        "Dạ phần ốc vít và lỗ khoan bên em đã chuẩn bị sẵn rồi ạ, mình chỉ cần một chiếc tua vít là có thể lắp ráp dễ dàng nha.",
-    ],
-    "no_inspect": [
-        "Dạ do quy định trước giờ của sàn rồi ạ, nhưng mình yên tâm, nhận có gì không đúng, bên em hỗ trợ đầy đủ theo chính sách của Shopee, quyền lợi của mình vẫn được đảm bảo đầu tiên ạ.",
+        f"Dạ sản phẩm là dạng tự lắp ạ. Mình xem video hướng dẫn của shop ở đây giúp em nha: {YOUTUBE_GUIDE_URL}",
+        f"Dạ bên em có video hướng dẫn lắp trên kênh YouTube của shop ạ: {YOUTUBE_GUIDE_URL}",
     ],
 }
 
@@ -347,20 +386,72 @@ class OpenClaw:
         ]
 
     def click_row(self, row: Row) -> None:
-        self.run("click-coords", str(row.x), str(row.y), timeout=20)
+        data = self.evaluate(
+            f"() => {{ const name={json.dumps(row.name, ensure_ascii=False)}; const preview={json.dumps(row.preview, ensure_ascii=False)}; "
+            "const nodes=Array.from(document.querySelectorAll('div')); const matches=[]; "
+            "for (const el of nodes) { const text=(el.innerText||'').trim(); const rect=el.getBoundingClientRect(); "
+            "if (!text || rect.left>520 || rect.top<120 || rect.width<250 || rect.width>460 || rect.height<45 || rect.height>150) continue; "
+            "if (text.includes(name) && text.includes(preview)) matches.push({el,rect,score:rect.height*10-rect.left}); } "
+            "matches.sort((a,b)=>b.score-a.score); if (!matches.length) return {ok:false}; "
+            "const target=matches[0].el; target.scrollIntoView({block:'center'}); "
+            "const r=target.getBoundingClientRect(); return {ok:true,x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}; }"
+        )
+        if isinstance(data, dict) and data.get("ok"):
+            self.run("click-coords", str(int(data.get("x", row.x))), str(int(data.get("y", row.y))), timeout=20)
+        else:
+            self.run("click-coords", str(row.x), str(row.y), timeout=20)
         time.sleep(0.7)
 
     def active_chat(self) -> ActiveChat:
         data = self.evaluate(
             "() => { const ta=document.querySelector('textarea'); const box=(ta && ta.closest('.chat-box')) || document.body; "
             "const ava=box && box.querySelector('img[alt=ava]'); const name=(ava && ava.parentElement && ava.parentElement.innerText) || ''; "
-            "return {name:name,text:((box && box.innerText) || '').slice(-5000),draft:(ta && ta.value) || ''}; }"
+            "return {name:name,text:((box && box.innerText) || '').slice(-15000),draft:(ta && ta.value) || ''}; }"
         )
         return ActiveChat(
             name=str(data.get("name", "")).strip(),
             text=str(data.get("text", "")),
             draft=str(data.get("draft", "")),
         )
+
+    def active_product_urls(self) -> list[str]:
+        data = self.evaluate(
+            "() => { const ta=document.querySelector('textarea'); const box=(ta && ta.closest('.chat-box')) || document.body; "
+            "return Array.from(box.querySelectorAll('a[href]')).map(a=>a.href).filter(h=>/shopee\\.vn/i.test(h)).slice(-8); }"
+        )
+        if not isinstance(data, list):
+            return []
+        seen: set[str] = set()
+        urls: list[str] = []
+        for item in data:
+            url = str(item)
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+        return urls
+
+    def mark_unread_current_chat(self) -> bool:
+        js = (
+            "() => {"
+            "const normalize=(value)=>(value||'').toString().normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace(/đ/g,'d').replace(/\\s+/g,' ').trim();"
+            "const visible=(el)=>{const rect=el.getBoundingClientRect();const style=window.getComputedStyle(el);return rect.width>0&&rect.height>0&&style.visibility!=='hidden'&&style.display!=='none';};"
+            "const fireClick=(el)=>{if(typeof el.click==='function'){el.click();}else{el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}};"
+            "const textOf=(el)=>normalize([el.innerText,el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('data-title'),el.getAttribute('data-tooltip'),el.className&&el.className.toString(),el.parentElement&&el.parentElement.getAttribute('aria-label'),el.parentElement&&el.parentElement.getAttribute('title'),el.parentElement&&el.parentElement.innerText].filter(Boolean).join(' '));"
+            "const clickableFor=(el)=>el.closest('button,[role=\"button\"],.ant-btn,[class*=\"button\"],[class*=\"icon\"]')||el;"
+            "const nodes=Array.from(document.querySelectorAll('button,[role=\"button\"],[aria-label],[title],[data-title],[data-tooltip],svg,i,span,div'));"
+            "const matches=[];const seen=new Set();"
+            "for(const node of nodes){const clickable=clickableFor(node);if(!clickable||seen.has(clickable)||!visible(clickable))continue;seen.add(clickable);const rect=clickable.getBoundingClientRect();if(rect.top<55||rect.top>190||rect.left<window.innerWidth*0.45)continue;const label=textOf(node)+' '+textOf(clickable);const explicit=label.includes('danh dau la chua doc')||label.includes('danh dau chua doc')||label.includes('chua doc')||label.includes('mark as unread')||label.includes('unread');if(explicit){matches.push({el:clickable,score:1000+rect.left,label});continue;}const maybeEye=(label.includes('eye')||label.includes('visibility')||label.includes('unread'))&&rect.left>window.innerWidth-360&&rect.width<=72&&rect.height<=72;if(maybeEye)matches.push({el:clickable,score:200+rect.left,label});}"
+            "matches.sort((a,b)=>b.score-a.score);if(matches.length){fireClick(matches[0].el);return {ok:true,method:'label',label:matches[0].label.slice(0,160)};}"
+            "const fallback=Array.from(document.querySelectorAll('button,[role=\"button\"],.ant-btn,[class*=\"icon\"]')).map((el)=>({el,rect:el.getBoundingClientRect(),label:textOf(el)})).filter(({el,rect})=>visible(el)&&rect.top>=55&&rect.top<=175&&rect.left>=window.innerWidth-320&&rect.width<=72&&rect.height<=72).sort((a,b)=>b.rect.left-a.rect.left);"
+            "if(fallback.length){fireClick(fallback[0].el);return {ok:true,method:'top-right-fallback',label:fallback[0].label.slice(0,160)};}"
+            "return {ok:false,method:'not-found'};"
+            "}"
+        )
+        data = self.evaluate(js)
+        if isinstance(data, dict) and data.get("ok"):
+            time.sleep(0.3)
+            return True
+        return False
 
     def set_message(self, message: str) -> str:
         data = self.evaluate(
@@ -401,6 +492,20 @@ def find_openclaw() -> str:
     raise RuntimeError("openclaw executable not found in PATH")
 
 
+def restart_openclaw_gateway() -> None:
+    executable = find_openclaw()
+    subprocess.run(
+        [executable, "gateway", "restart"],
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        timeout=120,
+    )
+    time.sleep(5.0)
+
+
 def fix_mojibake(text: str) -> str:
     try:
         fixed = text.encode("latin1").decode("utf-8")
@@ -421,25 +526,237 @@ def norm(text: str) -> str:
     return " ".join(strip_accents(text).lower().strip().split())
 
 
+def is_video_request(text: str) -> bool:
+    t = norm(text)
+    return any(
+        word in t
+        for word in (
+            "video",
+            "clip",
+            "huong dan",
+            "huong dan lap",
+            "huong dan rap",
+            "huong dan su dung",
+            "hdsd",
+            "hd lap",
+            "hd rap",
+            "cach lap",
+            "cach rap",
+            "day lap",
+            "day rap",
+            "video hd",
+            "xin vd",
+            "xem cach lap",
+            "lap nhu the nao",
+            "lap nhu nao",
+            "lap tu",
+            "lap ke",
+            "lap ban",
+            "rap tu",
+            "rap ke",
+            "rap ban",
+        )
+    ) and not any(block in t for block in ("khong lap", "ko lap"))
+
+
+def is_send_reference_request(text: str) -> bool:
+    """Customer is likely saying "send it here" after a previous request.
+
+    This is only a permission to open the conversation and inspect recent
+    context; quick_decision still requires recent video/assembly context before
+    sending anything.
+    """
+    t = norm(text)
+    if not t:
+        return False
+    blocked_context = (
+        "gap",
+        "don",
+        "hang",
+        "ship",
+        "giao",
+        "tien",
+        "phi",
+        "gia",
+        "oc",
+        "vit",
+        "phu kien",
+        "thieu",
+        "loi",
+        "vo",
+        "gay",
+        "hong",
+        "tra",
+        "hoan",
+        "bu",
+        "stk",
+        "tai khoan",
+        "zalo",
+        "sdt",
+    )
+    if any(re.search(rf"\b{re.escape(block)}\b", t) for block in blocked_context):
+        return False
+    patterns = (
+        r"\b(b|ban|shop)\s+gui\s+(minh|em|e|cho minh|cho em|qua day)\b",
+        r"\bgui\s+(minh|em|e|cho minh|cho em|qua day)\b",
+        r"\bgui\s+qua\s+day\b",
+        r"\bcho\s+(minh|em|e)\s+xin\s+(link|video|clip)?\b",
+        r"\bshop\s+gui\s+qua\b",
+        r"\bshop\s+gui\s+cho\s+(minh|em|e)\b",
+    )
+    return any(re.search(pattern, t) for pattern in patterns)
+
+
+def is_short_followup_request(text: str) -> bool:
+    """Short nudge after a previous message, e.g. "shop ơiiii" or "gấp giúp em".
+
+    This only permits opening the chat to inspect recent context. The bot still
+    sends only if the recent context contains a video/assembly request.
+    """
+    t = norm(text)
+    if not t or len(t) > 45:
+        return False
+    blocked_words = (
+        "don",
+        "hang",
+        "ship",
+        "giao",
+        "tien",
+        "phi",
+        "gia",
+        "oc",
+        "vit",
+        "phu kien",
+        "thieu",
+        "loi",
+        "vo",
+        "gay",
+        "hong",
+        "tra",
+        "hoan",
+        "bu",
+        "stk",
+        "tai khoan",
+        "zalo",
+        "sdt",
+    )
+    if any(re.search(rf"\b{re.escape(word)}\b", t) for word in blocked_words):
+        return False
+    patterns = (
+        r"\bshop o+i{2,}\b",
+        r"\balo{2,}\b",
+        r"\brep\s+(em|e|minh)\b",
+        r"\btra loi\s+(em|e|minh)\b",
+        r"\bgap giup\s+(em|e|minh)\b",
+        r"\bgiup\s+(em|e|minh)\s*(a|voi|nha)?\b",
+    )
+    return any(re.search(pattern, t) for pattern in patterns)
+
+
+def recent_chat_context(text: str, line_limit: int = 20) -> str:
+    lines = [line.strip() for line in fix_mojibake(text).splitlines() if line.strip()]
+    return "\n".join(lines[-line_limit:])
+
+
+def is_dimension_question(text: str) -> bool:
+    t = norm(text)
+    return any(
+        word in t
+        for word in (
+            "kich thuoc",
+            "size",
+            "so do",
+            "chieu dai",
+            "dai bao nhieu",
+            "chieu rong",
+            "rong bao nhieu",
+            "chieu cao",
+            "cao bao nhieu",
+            "cao bn",
+            "chieu sau",
+            "sau bao nhieu",
+            "do day",
+            "day bao nhieu",
+            "day mat",
+            "mat ban day",
+            "nang bao nhieu",
+            "bao nhieu kg",
+        )
+    )
+
+
+def is_product_info_request(text: str) -> bool:
+    t = norm(text)
+    if is_video_request(t) or is_dimension_question(t):
+        return True
+    return any(
+        word in t
+        for word in (
+            "go gi",
+            "chat lieu",
+            "lam tu go",
+            "go loai",
+            "mdf",
+            "melamine",
+            "mau gi",
+            "mau nao",
+            "co mau",
+            "f hau",
+            "f.hau",
+            "kin lung",
+            "co hau",
+            "hau lung",
+            "may tang",
+            "bao nhieu tang",
+            "may ngan",
+            "bao nhieu ngan",
+            "tai trong",
+            "chiu luc",
+            "bo tron",
+            "goc",
+            "nhon",
+            "tu lap",
+            "tu rap",
+            "lap rap",
+            "lap san",
+        )
+    )
+
+
 def is_shop_preview(preview: str) -> bool:
     p = norm(preview)
     return any(p.startswith(prefix) for prefix in SHOP_PREFIXES)
 
 
 def load_processed() -> set[str]:
+    return load_state_set("processed")
+
+
+def load_human_only() -> set[str]:
+    return load_state_set("human_only")
+
+
+def load_state_set(key: str) -> set[str]:
     if not STATE_PATH.exists():
         return set()
     try:
         data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return set()
-    return set(data.get("processed", []))
+    return set(data.get(key, []))
 
 
-def save_processed(processed: set[str]) -> None:
+def save_state(processed: set[str], human_only: set[str]) -> None:
     LOG_DIR.mkdir(exist_ok=True)
     STATE_PATH.write_text(
-        json.dumps({"processed": sorted(processed)[-1000:]}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {
+                "processed": sorted(processed)[-1000:],
+                "human_only": sorted(human_only)[-1000:],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
@@ -456,10 +773,86 @@ def safety_block_reason(reply: str) -> str | None:
                 if pattern in {r"\bzalo\b", r"\bfacebook\b"}:
                     return f"blocked keyword: {pattern}"
             return f"blocked keyword: {pattern}"
-    if len(reply) > 900:
+    missing_reason = missing_item_reason(text)
+    if missing_reason:
+        return missing_reason
+    if len(reply) > MAX_REPLY_CHARS:
         return "reply too long"
     if not text.startswith(("da", "minh", "em", "co")):
         return "reply does not match shop style"
+    return None
+
+
+def attachment_related_reason(text: str) -> str | None:
+    fixed = fix_mojibake(text)
+    normalized = norm(fixed)
+    if any(marker in fixed for marker in ATTACHMENT_MARKERS):
+        return "image/attachment case: human only"
+    if re.search(r"\[(hinh anh|image|photo|attachment|tep tin|file|voice|gif)\]", normalized):
+        return "image/attachment case: human only"
+    return None
+
+
+def private_payment_reason(text: str) -> str | None:
+    normalized = norm(text)
+    patterns = (
+        r"\bstk\b",
+        r"\bso tai khoan\b",
+        r"\bchuyen khoan\b",
+        r"\bbank\b",
+        r"\bqr\b",
+        r"\bzalo\b",
+        r"\bfacebook\b",
+        r"\bsdt\b",
+        r"\bso dien thoai\b",
+        r"\bngoai san\b",
+        r"\bship ngoai\b",
+    )
+    for pattern in patterns:
+        if re.search(pattern, normalized):
+            return "private payment/contact case: human only"
+    return None
+
+
+def complaint_or_defect_reason(text: str) -> str | None:
+    normalized = norm(text)
+    patterns = (
+        r"\bsai mau\b",
+        r"\bkhac mau\b",
+        r"\bmau khac\b",
+        r"\bgiao mau khac\b",
+        r"\bshop giao mau khac\b",
+        r"\bkhong dung mau\b",
+        r"\bk dung mau\b",
+        r"\bko dung mau\b",
+        r"\bdoi tra\b",
+        r"\bthat vong\b",
+        r"\buong tien\b",
+        r"\bqua met\b",
+        r"\bmet qua\b",
+        r"\bchat luong\b.*\b(kem|thap|te)\b",
+        r"\bdo hoan thien\b.*\b(kem|thap|te)\b",
+        r"\bsut\b",
+        r"\bvo\b",
+        r"\bme\b",
+        r"\bnut\b",
+        r"\bgay\b",
+        r"\bhong\b",
+        r"\bloi\b",
+        r"\bye?u\b",
+        r"\bchan tu ye?u\b",
+        r"\bkeo ra\b.*\b(kho|khong duoc|k duoc|ko duoc)\b",
+        r"\bday vao\b.*\b(kho|khong duoc|k duoc|ko duoc)\b",
+        r"\bkhong keo ra\b",
+        r"\bk keo ra\b",
+        r"\bko keo ra\b",
+        r"\bshop gui hang co ktra\b",
+        r"\bco ktra k\b",
+        r"\bco kiem tra k\b",
+    )
+    for pattern in patterns:
+        if re.search(pattern, normalized):
+            return "complaint/defect case: human only"
     return None
 
 
@@ -469,10 +862,157 @@ def preview_skip_reason(preview: str) -> str | None:
     the unread badge intact for a human."""
     if not preview:
         return None
+    attachment_reason = attachment_related_reason(preview)
+    if attachment_reason:
+        return attachment_reason
     text = norm(preview)
+    private_reason = private_payment_reason(text)
+    if private_reason:
+        return private_reason
+    cost_reason = cost_related_reason(text)
+    if cost_reason:
+        return cost_reason
+    return_reason = return_related_reason(text)
+    if return_reason:
+        return return_reason
+    complaint_reason = complaint_or_defect_reason(text)
+    if complaint_reason:
+        return complaint_reason
+    missing_reason = missing_item_reason(text)
+    if missing_reason:
+        return missing_reason
+    screw_reason = screw_related_reason(text)
+    if screw_reason:
+        return screw_reason
     for pattern in PREVIEW_SKIP_PATTERNS:
         if re.search(pattern, text):
             return f"preview skip: {pattern}"
+    if is_send_reference_request(text) or is_short_followup_request(text):
+        return None
+    if not is_product_info_request(text):
+        return "outside product-info scope"
+    return None
+
+
+def cost_related_reason(text: str) -> str | None:
+    normalized = norm(text)
+    cost_patterns = (
+        r"\bphi\b",
+        r"\bchi phi\b",
+        r"\bphu phi\b",
+        r"\bphi hu\b",
+        r"\bbao nhieu tien\b",
+        r"\btien hang\b",
+        r"\btien ship\b",
+        r"\btien van chuyen\b",
+        r"\bbao gia\b",
+        r"\bgia\b.*\b(bao nhieu|bn|sao|nao|sp|san pham|nay|a|ko|khong)\b",
+        r"\b(bao nhieu|bn)\b.*\bgia\b",
+        r"\bton bao nhieu\b",
+        r"\bmat bao nhieu\b",
+        r"\bmat phi\b",
+        r"\bship cao\b",
+        r"\bship dat\b",
+        r"\bphi ship\b",
+        r"\bphi van chuyen\b",
+        r"\bho tro phi\b",
+        r"\bho tro chi phi\b",
+        r"\bden bu\b",
+        r"\bboi thuong\b",
+    )
+    for pattern in cost_patterns:
+        if re.search(pattern, normalized):
+            return "cost/fee case: human only"
+    return None
+
+
+def return_related_reason(text: str) -> str | None:
+    normalized = norm(text)
+    return_patterns = (
+        r"\btra hang\b",
+        r"\bhoan hang\b",
+        r"\bhoan tien\b",
+        r"\bdoi tra\b",
+        r"\btra hoan\b",
+        r"\bye?u cau.*\bhoan\b",
+        r"\bye?u cau.*\btra\b",
+        r"\bkhieu nai.*\bhoan\b",
+        r"\brefund\b",
+        r"\breturn\b",
+    )
+    for pattern in return_patterns:
+        if re.search(pattern, normalized):
+            return "return/refund case: human only"
+    return None
+
+
+def missing_item_reason(text: str) -> str | None:
+    normalized = norm(text)
+    part_words = (
+        "tam ngan",
+        "bo phan",
+        "chi tiet",
+        "mat ban",
+        "canh tu",
+        "chan ban",
+        "tam",
+        "ngan",
+        "van",
+        "mieng",
+        "thanh",
+        "hang",
+        "do",
+        "mon",
+        "cai",
+        "canh",
+        "chan",
+        "mat",
+        "hau",
+        "lung",
+        "ke",
+        "tu",
+        "go",
+        "mdf",
+    )
+    part_pattern = "|".join(re.escape(word) for word in part_words)
+    missing_patterns = (
+        rf"\bthieu(?:\s+\w+){{0,4}}\s+({part_pattern})\b",
+        rf"\bbi thieu(?:\s+\w+){{0,4}}\s+({part_pattern})\b",
+        rf"\bgiao thieu(?:\s+\w+){{0,4}}\s+({part_pattern})\b",
+        rf"\bshop gui thieu(?:\s+\w+){{0,4}}\s+({part_pattern})\b",
+        rf"\bkhong thay(?:\s+\w+){{0,4}}\s+({part_pattern})\b",
+        rf"\bkhong co(?:\s+\w+){{0,4}}\s+({part_pattern})\b",
+        rf"\bko thay(?:\s+\w+){{0,4}}\s+({part_pattern})\b",
+        rf"\bko co(?:\s+\w+){{0,4}}\s+({part_pattern})\b",
+    )
+    for pattern in missing_patterns:
+        if re.search(pattern, normalized):
+            return "missing item/part case: human only"
+    return None
+
+
+def screw_related_reason(text: str) -> str | None:
+    normalized = norm(text)
+    screw_patterns = (
+        r"\boc\b",
+        r"\bvit\b",
+        r"\btua vit\b",
+        r"\blo vit\b",
+        r"\blo khoan\b",
+        r"\bkhoan san\b",
+        r"\bphu kien\b",
+        r"\bgoi phu kien\b",
+        r"\bthieu phu kien\b",
+        r"\bbu long\b",
+        r"\bbulong\b",
+        r"\bdinh\b",
+        r"\bgoi oc\b",
+        r"\bthieu oc\b",
+        r"\boc vit\b",
+    )
+    for pattern in screw_patterns:
+        if re.search(pattern, normalized):
+            return "screw-related case: human only"
     return None
 
 
@@ -543,9 +1083,189 @@ def looks_like_product_name(line: str) -> bool:
 def product_note(chat_text: str) -> str:
     product = extract_product_context(chat_text)
     if not product.name:
-        return "Salework khong hien ro san pham trong ngu canh dang doc."
+        return (
+            "Salework khong hien ro san pham trong ngu canh dang doc. "
+            "Khong bat khach tu xem mo ta san pham; neu can thong tin san pham chinh xac thi action=skip."
+        )
     code = f" Ma san pham thay duoc: {product.code}." if product.code else ""
-    return f"Salework dang hien thi san pham: {product.name}.{code} Khong hoi khach gui lai ma/ten san pham neu thong tin nay da co trong ngu canh."
+    return (
+        f"Salework dang hien thi san pham: {product.name}.{code} "
+        "Tu dung thong tin san pham nay de tra loi. "
+        "Khong hoi khach gui lai ma/ten san pham va khong bao khach tu xem mo ta/live neu thong tin nay da co trong ngu canh."
+    )
+
+
+def shorten_reply(reply: str, max_chars: int = MAX_REPLY_CHARS) -> str:
+    text = " ".join(fix_mojibake(reply).split()).strip()
+    if len(text) <= max_chars:
+        return text
+    parts = re.split(r"(?<=[.!?ạ])\s+", text)
+    candidate = " ".join(parts[:2]).strip()
+    if candidate and len(candidate) <= max_chars:
+        return candidate
+    cut = text[:max_chars].rsplit(" ", 1)[0].rstrip(" ,.;")
+    if not cut.endswith(("ạ", "nha", "nhé", ".", "!", "?")):
+        cut += " ạ"
+    return cut
+
+
+def clean_description_line(line: str) -> str:
+    line = " ".join(fix_mojibake(line).split()).strip(" -:|")
+    return line[:220].strip()
+
+
+def line_has_price_or_policy(line: str) -> bool:
+    normalized = norm(line)
+    return any(
+        word in normalized
+        for word in (
+            "gia",
+            "phi",
+            "voucher",
+            "freeship",
+            "hoan tien",
+            "tra hang",
+            "bao hanh",
+            "lien he",
+            "zalo",
+            "facebook",
+            "sdt",
+        )
+    )
+
+
+def extract_dimension_answer(description_text: str, question: str = "") -> str | None:
+    fixed = fix_mojibake(description_text)
+    q = norm(question)
+    lines = [clean_description_line(line) for line in fixed.splitlines()]
+    lines = [line for line in lines if line and not line_has_price_or_policy(line)]
+    scope = "\n".join(lines)
+
+    if "cao" in q:
+        match = re.search(r"(?:cao|chiều cao|chieu cao)\s*[:\-]?\s*([0-9]+(?:[,.][0-9]+)?\s*(?:cm|mm|m))", scope, flags=re.IGNORECASE)
+        if match:
+            return f"Dạ mẫu này cao khoảng {match.group(1).replace(' ', '')} ạ."
+    if "rong" in q:
+        match = re.search(r"(?:rộng|rong|chiều rộng|chieu rong)\s*[:\-]?\s*([0-9]+(?:[,.][0-9]+)?\s*(?:cm|mm|m))", scope, flags=re.IGNORECASE)
+        if match:
+            return f"Dạ mẫu này rộng khoảng {match.group(1).replace(' ', '')} ạ."
+    if "dai" in q:
+        match = re.search(r"(?:dài|dai|chiều dài|chieu dai)\s*[:\-]?\s*([0-9]+(?:[,.][0-9]+)?\s*(?:cm|mm|m))", scope, flags=re.IGNORECASE)
+        if match:
+            return f"Dạ mẫu này dài khoảng {match.group(1).replace(' ', '')} ạ."
+    if "sau" in q:
+        match = re.search(r"(?:sâu|sau|chiều sâu|chieu sau)\s*[:\-]?\s*([0-9]+(?:[,.][0-9]+)?\s*(?:cm|mm|m))", scope, flags=re.IGNORECASE)
+        if match:
+            return f"Dạ mẫu này sâu khoảng {match.group(1).replace(' ', '')} ạ."
+    if "day" in q:
+        match = re.search(r"(?:dày|day|độ dày|do day)\s*[:\-]?\s*([0-9]+(?:[,.][0-9]+)?\s*(?:cm|mm|m))", scope, flags=re.IGNORECASE)
+        if match:
+            return f"Dạ mẫu này dày khoảng {match.group(1).replace(' ', '')} ạ."
+    if "kg" in q or "nang" in q:
+        match = re.search(r"(?:nặng|nang|khối lượng|khoi luong)\s*[:\-]?\s*([0-9]+(?:[,.][0-9]+)?(?:\s*[-–]\s*[0-9]+(?:[,.][0-9]+)?)?\s*kg)", scope, flags=re.IGNORECASE)
+        if match:
+            return f"Dạ mẫu này nặng khoảng {match.group(1).replace(' ', '')} ạ."
+
+    size_patterns = (
+        r"(?:kích thước|kich thuoc|size|kt)\s*[:\-]?\s*([0-9]+(?:[,.][0-9]+)?\s*(?:cm|mm|m)?\s*[x×]\s*[0-9]+(?:[,.][0-9]+)?\s*(?:cm|mm|m)?(?:\s*[x×]\s*[0-9]+(?:[,.][0-9]+)?\s*(?:cm|mm|m)?)?)",
+        r"\b([0-9]+(?:[,.][0-9]+)?\s*(?:cm|mm|m)\s*[x×]\s*[0-9]+(?:[,.][0-9]+)?\s*(?:cm|mm|m)(?:\s*[x×]\s*[0-9]+(?:[,.][0-9]+)?\s*(?:cm|mm|m))?)\b",
+        r"\b([0-9]+m[0-9]?\s*[x×]\s*[0-9]+(?:[,.][0-9]+)?\s*cm(?:\s*[x×]\s*[0-9]+(?:[,.][0-9]+)?\s*cm)?)\b",
+    )
+    for pattern in size_patterns:
+        match = re.search(pattern, scope, flags=re.IGNORECASE)
+        if match:
+            value = " ".join(match.group(1).split())
+            return f"Dạ kích thước mẫu này khoảng {value} ạ."
+    return None
+
+
+def extract_description_fact_answer(description_text: str, question: str) -> str | None:
+    q = norm(question)
+    fixed = fix_mojibake(description_text)
+    lines = [clean_description_line(line) for line in fixed.splitlines()]
+    lines = [line for line in lines if line and not line_has_price_or_policy(line)]
+
+    topic_terms: tuple[str, ...]
+    if any(term in q for term in ("chat lieu", "go gi", "go loai", "mdf", "melamine")):
+        topic_terms = ("chất liệu", "chat lieu", "mdf", "melamine", "gỗ", "go")
+    elif any(term in q for term in ("mau", "màu")):
+        topic_terms = ("màu", "mau", "trắng", "den", "đen", "vân", "van")
+    elif any(term in q for term in ("hau", "kin lung", "f hau", "f.hau")):
+        topic_terms = ("hậu", "hau", "lưng", "lung", "kín lưng", "kin lung")
+    elif any(term in q for term in ("tang", "ngan")):
+        topic_terms = ("tầng", "tang", "ngăn", "ngan")
+    elif any(term in q for term in ("tai trong", "chiu luc")):
+        topic_terms = ("tải trọng", "tai trong", "chịu lực", "chiu luc")
+    elif any(term in q for term in ("goc", "bo tron", "nhon")):
+        topic_terms = ("góc", "goc", "bo", "cạnh", "canh")
+    else:
+        return None
+
+    for line in lines:
+        normalized = norm(line)
+        if any(norm(term) in normalized for term in topic_terms) and len(line) <= 180:
+            return shorten_reply(f"Dạ theo thông tin sản phẩm, {line[0].lower() + line[1:] if line else line} ạ.")
+    return None
+
+
+def answer_from_product_description(description_text: str, question: str) -> str | None:
+    if is_dimension_question(question):
+        answer = extract_dimension_answer(description_text, question)
+        if answer:
+            return shorten_reply(answer)
+    answer = extract_description_fact_answer(description_text, question)
+    if answer:
+        return shorten_reply(answer)
+    return None
+
+
+def read_shopee_page(claw: OpenClaw, url: str) -> dict[str, Any]:
+    claw.run("open", url, timeout=45)
+    time.sleep(5.0)
+    data = claw.evaluate(
+        "() => { const links=Array.from(document.querySelectorAll('a[href]')).map(a=>a.href)"
+        ".filter(h=>/shopee\\.vn/i.test(h)).slice(0,30); "
+        "return {url:location.href,title:document.title,text:(document.body && document.body.innerText || '').slice(0,60000),links}; }"
+    )
+    return data if isinstance(data, dict) else {"url": url, "title": "", "text": "", "links": []}
+
+
+def lookup_product_answer(
+    lookup_claw: OpenClaw | None,
+    product: ProductContext,
+    question: str,
+    product_urls: list[str],
+) -> str | None:
+    if lookup_claw is None:
+        return None
+    urls = [url for url in product_urls if "shopee.vn" in url]
+    if not urls and (product.name or product.code):
+        query = " ".join(part for part in (product.code, product.name) if part).strip()
+        urls.append("https://shopee.vn/search?keyword=" + quote_plus(query))
+    if not urls:
+        return None
+
+    for url in urls[:3]:
+        try:
+            page = read_shopee_page(lookup_claw, url)
+            text = str(page.get("text", ""))
+            normalized = norm(text[:2000])
+            if any(word in normalized for word in ("captcha", "xac minh", "verify", "robot")):
+                continue
+            answer = answer_from_product_description(text, question)
+            if answer:
+                return answer
+            if "/search" in str(page.get("url", "")):
+                links = [str(link) for link in page.get("links", []) if "/product/" in str(link) or "-i." in str(link)]
+                for link in links[:3]:
+                    page = read_shopee_page(lookup_claw, link)
+                    answer = answer_from_product_description(str(page.get("text", "")), question)
+                    if answer:
+                        return answer
+        except Exception as exc:
+            log(f"WARN lookup failed for {url}: {exc}")
+            continue
+    return None
 
 
 def quick_decision(
@@ -557,90 +1277,76 @@ def quick_decision(
     accept, or None if no rule applied. The seed parameter selects which
     phrasing variant to use (per-customer-per-day stability)."""
     t = norm(customer_text)
-    full = norm(chat_text)
     code = extract_product_code(chat_text)
     product = extract_product_context(chat_text)
     product_name = norm(product.name)
     s = seed or customer_text
 
-    if any(word in t for word in ["stk", "so tai khoan", "qr", "chuyen khoan", "bank", "the ngan hang", "mb bank", "tk ngan hang"]):
-        return Decision(
-            "send",
-            pick_variant("policy_payment", s),
-            "policy_payment",
-            "bank/private payment mention",
-            0.95,
-        )
+    recent_context = recent_chat_context(chat_text)
+    recent_scope = f"{customer_text}\n{recent_context}"
+    attachment_reason = attachment_related_reason(recent_scope)
+    if attachment_reason:
+        return Decision("skip", "", "attachment", attachment_reason, 1.0)
 
-    if any(word in t for word in ["cam on", "thank", "thanks", "tks", "tk em", "tk shop", " ok ", "okie", "okay", "vang a", " vang ", "da nhe"]) or t in {"ok", "okie", "okay", "vang"}:
-        return Decision("send", pick_variant("thanks", s), "thanks", "simple thanks", 0.9)
+    private_reason = private_payment_reason(customer_text)
+    if private_reason:
+        return Decision("skip", "", "private_payment", private_reason, 1.0)
 
-    if t in {"hi", "hello", "alo", "shop oi", "shop oi shop", "shop", "em oi", "alo shop", "chao shop", "shop con day k", "shop co o do k"}:
-        return Decision("send", pick_variant("greeting", s), "greeting", "greeting", 0.85)
+    return_reason = return_related_reason(customer_text)
+    if return_reason:
+        return Decision("skip", "", "return_refund", return_reason, 1.0)
 
-    if any(word in t for word in ["video", "huong dan", "huong dan lap", "lap nhu the nao", "lap nhu nao", "cach lap"]) and not any(b in t for b in ["khong lap", "ko lap"]):
+    complaint_reason = complaint_or_defect_reason(recent_scope)
+    if complaint_reason:
+        return Decision("skip", "", "complaint_defect", complaint_reason, 1.0)
+
+    cost_reason = cost_related_reason(customer_text)
+    if cost_reason:
+        return Decision("skip", "", "cost_fee", cost_reason, 1.0)
+
+    missing_reason = missing_item_reason(recent_scope)
+    if missing_reason:
+        return Decision("skip", "", "missing_item", missing_reason, 1.0)
+
+    screw_reason = screw_related_reason(recent_scope)
+    if screw_reason:
+        return Decision("skip", "", "screw_related", screw_reason, 1.0)
+
+    context_video_request = is_video_request(recent_context)
+    if is_video_request(t) or (
+        (is_send_reference_request(t) or is_short_followup_request(t)) and context_video_request
+    ):
         if code:
             reply = (
-                f"Dạ mẫu này mã {code}, mình vào YouTube tìm giúp em: TAGO {code} nha. "
-                "Kênh hướng dẫn của shop đây ạ: https://www.youtube.com/@TagoFurniture2412 "
-                "Mình xem đúng video theo mã sản phẩm là lắp được ạ."
+                f"Dạ mẫu này mã {code}, mình xem video hướng dẫn của shop ở đây giúp em nha: {YOUTUBE_GUIDE_URL}"
             )
         else:
-            reply = (
-                "Dạ mình xem video hướng dẫn ở kênh này giúp em nha: https://www.youtube.com/@TagoFurniture2412 "
-                "Mình vào YouTube rồi tìm theo TAGO + mã/tên sản phẩm để ra đúng mẫu mình đang lắp ạ."
-            )
+            reply = f"Dạ mình xem video hướng dẫn của shop ở đây giúp em nha: {YOUTUBE_GUIDE_URL}"
         return Decision("send", reply, "assembly_video", "assembly/video request", 0.9)
 
-    if any(word in t for word in ["tua vit", "tua vít", "phu kien", "co tang oc", "co kem oc", "khoan san chua"]):
-        return Decision("send", pick_variant("screwdriver", s), "screwdriver", "screwdriver/accessory question", 0.85)
+    if is_send_reference_request(t):
+        return Decision(
+            "skip",
+            "",
+            "ambiguous_send_reference",
+            "send-reference message without recent video/assembly context",
+            0.0,
+        )
+
+    if is_short_followup_request(t):
+        return Decision(
+            "skip",
+            "",
+            "ambiguous_short_followup",
+            "short follow-up without recent video/assembly context",
+            0.0,
+        )
 
     if any(word in t for word in ["go gi", "chat lieu gi", "lam tu go gi", "go loai gi", "go mdf chua", "co ben khong"]):
         return Decision("send", pick_variant("material_wood", s), "material_wood", "material question", 0.85)
 
     if any(word in t for word in ["tu lap", "tu rap", "lap san chua", "co lap san chua", "co lap san khong", "co lap san k"]):
         return Decision("send", pick_variant("self_assembly", s), "self_assembly", "self-assembly question", 0.85)
-
-    if any(word in t for word in ["khi nao toi", "bao gio toi", "bao gio den", "khi nao den", "bao lau thi den", "may ngay thi nhan"]):
-        return Decision("send", pick_variant("delivery_time", s), "delivery_time", "delivery ETA question", 0.85)
-
-    if any(word in t for word in ["phi ship bao nhieu", "phi van chuyen bao nhieu", "ship cao qua", "phi giao cao", "ship dat the"]):
-        return Decision("send", pick_variant("shipping_fee", s), "shipping_fee", "shipping fee question", 0.85)
-
-    if any(word in t for word in ["co dc ktra hang khong", "co duoc ktra hang khong", "co duoc kiem tra hang", "duoc xem hang truoc khi nhan", "co dc xem hang khong"]):
-        return Decision("send", pick_variant("no_inspect", s), "no_inspect", "inspect-before-receive question", 0.85)
-
-    if any(word in t for word in ["khong thay goi oc", "ko thay goi oc", "khong co oc", "ko co oc", "thieu oc", "oc vit dau", "goi oc dau", "khong co goi oc"]):
-        if any(word in t for word in ["tim may lan", "bo ban ra", "van khong thay", "kiem tra het roi", "ktra het roi", "tim mai khong thay"]):
-            reply = pick_variant("missing_screws_confirmed", s)
-        else:
-            reply = pick_variant("missing_screws_first", s)
-        return Decision("send", reply, "missing_screws", "missing screws", 0.9)
-
-    if any(word in t for word in ["xoay oc", "van oc", "kco noi", "khong noi cai", "ko noi", "vit cung", "vit khong vao", "khong van duoc"]):
-        return Decision(
-            "send",
-            pick_variant("tight_screws", s),
-            "tight_screws",
-            "screw tightening help",
-            0.9,
-        )
-
-    if any(word in t for word in ["gay", "vo", "hu", "loi", "lech", "thieu hang", "khac phuc", "moc", "tray xuoc", "vet xuoc"]):
-        return Decision(
-            "send",
-            pick_variant("defect_first_step", s),
-            "defect_first_step",
-            "defect/complaint safe first step",
-            0.86,
-        )
-
-    if any(word in t for word in ["chua nhan", "khong nhan", "ko nhan", "giao hang", "giao hag", "van chuyen", "don vi", "shipper", "tra hoan", "lau qua", "cham qua", "sao chua giao"]):
-        if "dang giao" in full:
-            reply = pick_variant("shipping_in_transit", s)
-        else:
-            reply = pick_variant("shipping_no_status", s)
-        return Decision("send", reply, "shipping_status", "shipping/not received", 0.86)
 
     if any(word in t for word in ["goc", "bo tron", "nhon"]):
         return Decision(
@@ -689,7 +1395,7 @@ def quick_decision(
                 0.84,
             )
 
-    if any(word in t for word in ["cao bao nhieu", "cao bn", "kich thuoc", "nang bao nhieu", "bao nhieu kg"]):
+    if is_dimension_question(t):
         if product.name:
             return Decision(
                 "skip",
@@ -700,16 +1406,16 @@ def quick_decision(
             )
         return Decision("skip", "", "dimension_no_product_context", "no visible product context", 0.0)
 
-    if any(word in t for word in ["huy", "doi dia chi"]):
+    if is_product_info_request(t):
         return Decision(
             "skip",
             "",
-            "cancel_address",
-            "cancel/address change needs human or Shopee-only wording",
-            0.5,
+            "product_info_lookup_needed",
+            "product info question needs Shopee description lookup",
+            0.0,
         )
 
-    return None
+    return Decision("skip", "", "outside_product_info_scope", "only product video/dimensions/description info allowed", 0.0)
 
 
 async def gemini_decision(customer_text: str, chat_text: str, prompt_text: str) -> Decision:
@@ -727,11 +1433,20 @@ async def gemini_decision(customer_text: str, chat_text: str, prompt_text: str) 
                     "text": (
                         "Ban la bo loc tra loi Shopee Chat cho shop noi that. "
                         "Chi tra ve JSON hop le. Neu khong chac, action='skip'. "
+                        "Chi duoc action='send' cho 3 nhom: xin video huong dan/san pham, hoi kich thuoc, hoi thong tin co trong mo ta san pham. "
+                        "Moi case khac deu action='skip'. Tra loi ngan toi da 1-2 cau, duoi 240 ky tu. "
                         "TUYET DOI khong nhac so tai khoan, QR, chuyen khoan, Zalo, Facebook, sdt, ngoai san, ngoai Shopee. "
                         "TUYET DOI khong hua hoan tien, gui bu, den bu, giam gia, tang qua, ho tro chi phi, ho tro phi ship. "
                         "Khong dung cum 'phi ho tro', 'ho tro lai chi phi', 'gui bu', 'gui don oc', 'hoan lai'. "
                         "Khong yeu cau hoac goi y khach huy don. "
+                        "Truong hop khach noi tra hang, hoan hang, hoan tien, doi tra, tra hoan: action='skip', khong nhan tin. "
+                        "Truong hop nao co lien quan oc, vit, tua vit, lo khoan, khoan san, phu kien: action='skip', khong nhan tin. "
+                        "Truong hop nao khach bao thieu tam, thieu ngan, thieu chi tiet, thieu hang, giao thieu bat ky mon nao: action='skip', khong nhan tin. "
+                        "Truong hop khach gui hinh anh/tep/clip hoac can xem anh: action='skip', khong nhan tin. "
+                        "Truong hop nhac phi, chi phi, phi hu, tien, gia, den bu, boi thuong: action='skip', khong nhan tin. "
                         "Khong xin lai ma san pham/ma mau neu Salework da hien ro san pham. "
+                        "Khong bao khach tu xem mo ta san pham, xem live, hoac tu check thong tin san pham; phai tu doc san pham trong Salework. "
+                        "Neu khong co so do/thong tin san pham chac chan, action='skip' de nguoi shop kiem tra. "
                         "Duoc gui link YouTube huong dan lap san pham cua shop neu khach hoi video/huong dan lap. "
                         "Cau tra loi phai mem, co 'Da', xung 'em', goi khach la 'minh' hoac 'anh/chi'."
                     )
@@ -765,8 +1480,16 @@ Hay tra ve DUY NHAT JSON:
   "confidence": 0.0
 }}
 
-Chi action=send neu la case de hoac buoc dau an toan: xin loi, xin anh/video, huong dan trong Shopee, hoi lai thong tin, tra loi lap rap/phu kien/video/chat lieu chung.
-Neu Salework da hien san pham, khong hoi khach gui lai ma san pham/ma mau/anh mau.
+Chi action=send neu la case hoi video huong dan/san pham, kich thuoc, hoac thong tin co trong mo ta san pham. Cau tra loi ngan gon toi da 1-2 cau.
+Moi case khac action=skip, khong tra loi buoc dau.
+Neu khach noi ve tra hang/hoan hang/hoan tien/doi tra/tra hoan/refund/return, action=skip. Khong tu gui bat ky tin nhan nao cho case nay.
+Neu khach hoac lich su chat co noi ve oc/vit/tua vit/lo khoan/khoan san/phu kien/goi phu kien/thieu phu kien, action=skip. Khong tu gui bat ky tin nhan nao cho case nay.
+Neu khach hoac lich su chat co noi ve thieu tam/thieu ngan/thieu chi tiet/thieu hang/giao thieu/khong thay mon nao do trong kien hang, action=skip. Khong tu gui bat ky tin nhan nao cho case nay.
+Neu khach gui hinh anh/tep/clip, hoac noi can xem anh/loi qua anh, action=skip. Khong tu gui bat ky tin nhan nao.
+Neu khach nhac phi/chi phi/phi hu/tien/gia/den bu/boi thuong, action=skip. Khong tu gui bat ky tin nhan nao.
+Neu Salework da hien san pham, tu dung ma/ten/boi canh san pham dang hien thi; khong hoi khach gui lai ma san pham/ma mau/anh mau.
+Tuyet doi khong viet cac cau kieu "minh xem phan mo ta", "tham khao mo ta", "xem chi tiet tren Shopee", "xem live cua shop" de day viec check san pham cho khach.
+Neu khach hoi kich thuoc/do day/chieu cao va khong co so lieu chac chan trong Salework/luat co san, action=skip; khong tra loi doan va khong bat khach tu check.
 Neu can quyet dinh den bu/gui bu/hoan tien/doi tra/huy don/thong tin rieng/khong chac so do, action=skip.
 """.strip()
                     }
@@ -775,6 +1498,7 @@ Neu can quyet dinh den bu/gui bu/hoan tien/doi tra/huy don/thong tin rieng/khong
         ],
         "generationConfig": {
             "temperature": temperature,
+            "maxOutputTokens": 220,
             "responseMimeType": "application/json",
         },
     }
@@ -875,7 +1599,7 @@ async def decide(
     return await gemini_decision(customer_text, chat_text, prompt_text)
 
 
-def is_handleable_candidate(row: Row, processed: set[str]) -> tuple[bool, str]:
+def is_handleable_candidate(row: Row, processed: set[str], human_only: set[str]) -> tuple[bool, str]:
     """Pre-screen from row preview only (NO click). Returns (handleable, reason).
     The bot must not open a chat it cannot reply to — opening clears the
     unread badge and steals the case from a human."""
@@ -887,6 +1611,8 @@ def is_handleable_candidate(row: Row, processed: set[str]) -> tuple[bool, str]:
         return False, "page header preview"
     if key_for(row) in processed:
         return False, "already processed"
+    if key_for(row) in human_only:
+        return False, "human-only already flagged"
     reason = preview_skip_reason(row.preview)
     if reason:
         return False, reason
@@ -900,23 +1626,54 @@ def find_row_by_name(rows: list[Row], name: str) -> Row | None:
     return None
 
 
-async def process_once(claw: OpenClaw, prompt_text: str, processed: set[str], args: argparse.Namespace) -> int:
+def mark_unread_for_manual_check(claw: OpenClaw, row: Row, reason: str, dry_run: bool) -> None:
+    if dry_run:
+        return
+    try:
+        marked = claw.mark_unread_current_chat()
+    except Exception as exc:
+        log(f"WARN_MARK_UNREAD {row.name}: failed after {reason}: {exc}")
+        return
+    if marked:
+        log(f"MARK_UNREAD {row.name}: ok | {reason}")
+    else:
+        log(f"WARN_MARK_UNREAD {row.name}: button not found | {reason}")
+
+
+async def process_once(
+    claw: OpenClaw,
+    lookup_claw: OpenClaw | None,
+    prompt_text: str,
+    processed: set[str],
+    human_only: set[str],
+    args: argparse.Namespace,
+) -> int:
     sent = 0
     rows = claw.rows()
     candidates: list[Row] = []
     skipped_no_click = 0
+    state_dirty = False
     for row in rows:
-        ok, reason = is_handleable_candidate(row, processed)
+        row_key = key_for(row)
+        ok, reason = is_handleable_candidate(row, processed, human_only)
         if not ok:
-            if reason and reason != "already processed" and reason != "shop's own message":
+            if reason and reason not in {
+                "already processed",
+                "human-only already flagged",
+                "shop's own message",
+            }:
                 skipped_no_click += 1
                 log(f"SKIP_NOCLICK {row.name}: {reason}")
+                if not args.dry_run and reason != "outside product-info scope":
+                    human_only.add(row_key)
+                    state_dirty = True
             continue
         candidates.append(row)
 
     log(f"visible_rows={len(rows)} candidates={len(candidates)} skipped_no_click={skipped_no_click}")
-
-    processed_dirty = False
+    if state_dirty and not args.dry_run:
+        save_state(processed, human_only)
+        state_dirty = False
 
     for row in candidates[: args.max_candidates]:
         if sent >= args.max_send:
@@ -925,8 +1682,8 @@ async def process_once(claw: OpenClaw, prompt_text: str, processed: set[str], ar
         # Refresh row coordinates — the chat list re-orders after every send,
         # so the (x,y) we captured at the start may now point to a different
         # conversation. Look the row up again by name before clicking.
-        fresh_rows = claw.rows() if sent > 0 else rows
-        fresh_row = find_row_by_name(fresh_rows, row.name) if sent > 0 else row
+        fresh_rows = claw.rows()
+        fresh_row = find_row_by_name(fresh_rows, row.name)
         if fresh_row is None:
             log(f"SKIP {row.name}: row no longer visible after reorder")
             continue
@@ -942,20 +1699,106 @@ async def process_once(claw: OpenClaw, prompt_text: str, processed: set[str], ar
 
         if active.name and row.name not in active.name:
             log(f"SKIP {row.name}: active chat mismatch -> {active.name!r}")
+            mark_unread_for_manual_check(claw, row, "active chat mismatch", args.dry_run)
             continue
         if active.draft.strip():
             log(f"SKIP {row.name}: textarea already has draft")
+            mark_unread_for_manual_check(claw, row, "textarea already has draft", args.dry_run)
+            continue
+
+        active_recent_scope = f"{row.preview}\n{recent_chat_context(active.text)}"
+        attachment_reason = attachment_related_reason(active_recent_scope)
+        if attachment_reason:
+            log(f"FLAG_HUMAN {row.name}: {attachment_reason}")
+            if not args.dry_run:
+                human_only.add(row_key)
+                state_dirty = True
+            mark_unread_for_manual_check(claw, row, attachment_reason, args.dry_run)
+            continue
+
+        private_reason = private_payment_reason(row.preview)
+        if private_reason:
+            log(f"FLAG_HUMAN {row.name}: {private_reason}")
+            if not args.dry_run:
+                human_only.add(row_key)
+                state_dirty = True
+            mark_unread_for_manual_check(claw, row, private_reason, args.dry_run)
+            continue
+
+        complaint_reason = complaint_or_defect_reason(active_recent_scope)
+        if complaint_reason:
+            log(f"FLAG_HUMAN {row.name}: {complaint_reason}")
+            if not args.dry_run:
+                human_only.add(row_key)
+                state_dirty = True
+            mark_unread_for_manual_check(claw, row, complaint_reason, args.dry_run)
+            continue
+
+        cost_reason = cost_related_reason(row.preview)
+        if cost_reason:
+            log(f"FLAG_HUMAN {row.name}: {cost_reason}")
+            if not args.dry_run:
+                human_only.add(row_key)
+                state_dirty = True
+            mark_unread_for_manual_check(claw, row, cost_reason, args.dry_run)
+            continue
+
+        return_reason = return_related_reason(active_recent_scope)
+        if return_reason:
+            log(f"FLAG_HUMAN {row.name}: {return_reason}")
+            if not args.dry_run:
+                human_only.add(row_key)
+                state_dirty = True
+            mark_unread_for_manual_check(claw, row, return_reason, args.dry_run)
+            continue
+
+        missing_reason = missing_item_reason(active_recent_scope)
+        if missing_reason:
+            log(f"FLAG_HUMAN {row.name}: {missing_reason}")
+            if not args.dry_run:
+                human_only.add(row_key)
+                state_dirty = True
+            mark_unread_for_manual_check(claw, row, missing_reason, args.dry_run)
+            continue
+
+        screw_reason = screw_related_reason(active_recent_scope)
+        if screw_reason:
+            log(f"FLAG_HUMAN {row.name}: {screw_reason}")
+            if not args.dry_run:
+                human_only.add(row_key)
+                state_dirty = True
+            mark_unread_for_manual_check(claw, row, screw_reason, args.dry_run)
             continue
 
         seed = variant_seed(row.name)
         decision = await decide(row.preview, active.text, prompt_text, args.use_gemini, seed=seed)
         decision = Decision(
             action=decision.action,
-            reply=fix_mojibake(decision.reply).strip(),
+            reply=shorten_reply(decision.reply),
             category=decision.category,
             reason=decision.reason,
             confidence=decision.confidence,
         )
+        if decision.action != "send" and decision.category in LOOKUP_NEEDED_CATEGORIES:
+            product = extract_product_context(active.text)
+            urls = claw.active_product_urls()
+            lookup_reply = lookup_product_answer(lookup_claw, product, row.preview, urls)
+            if lookup_reply:
+                decision = Decision(
+                    "send",
+                    shorten_reply(lookup_reply),
+                    "product_description_lookup",
+                    "answered from Shopee product description",
+                    0.82,
+                )
+            else:
+                log(f"FLAG_HUMAN {row.name}: product description lookup failed | {decision.reason}")
+                if not args.dry_run:
+                    human_only.add(row_key)
+                    state_dirty = True
+                mark_unread_for_manual_check(claw, row, decision.reason, args.dry_run)
+                continue
+
         if decision.action != "send" or not decision.reply:
             log(f"SKIP {row.name}: {decision.category} | {decision.reason}")
             # Only mark as processed when the decision is *definitive* (no
@@ -964,16 +1807,32 @@ async def process_once(claw: OpenClaw, prompt_text: str, processed: set[str], ar
             # we could later answer.
             transient = decision.category in {"gemini", "config"} and "HTTP" in (decision.reason or "")
             transient = transient or decision.reason == "missing Gemini API key"
-            if not transient and not args.dry_run:
-                processed.add(row_key)
-                processed_dirty = True
+            human_only_decision = decision.category in {
+                "return_refund",
+                "missing_item",
+                "screw_related",
+                "cost_fee",
+                "attachment",
+                "private_payment",
+                "complaint_defect",
+            }
+            if not args.dry_run:
+                if not transient:
+                    if human_only_decision:
+                        human_only.add(row_key)
+                    else:
+                        processed.add(row_key)
+                    state_dirty = True
+                mark_unread_for_manual_check(claw, row, decision.reason or decision.category, args.dry_run)
             continue
 
         block = safety_block_reason(decision.reply)
         if block:
-            log(f"SKIP {row.name}: safety block {block} | reply={decision.reply!r}")
-            # Safety-blocked reply: don't send and don't mark processed.
-            # We want the case to remain unread for a human to handle.
+            log(f"FLAG_HUMAN {row.name}: safety block {block} | reply={decision.reply!r}")
+            if not args.dry_run:
+                human_only.add(row_key)
+                state_dirty = True
+            mark_unread_for_manual_check(claw, row, block, args.dry_run)
             continue
 
         if args.dry_run:
@@ -985,37 +1844,47 @@ async def process_once(claw: OpenClaw, prompt_text: str, processed: set[str], ar
             value = claw.set_message(decision.reply)
             if value.strip() != decision.reply.strip():
                 log(f"SKIP {row.name}: textarea value mismatch")
-                continue
-            # Final safety re-check on the actual textarea contents.
-            final_block = safety_block_reason(value)
-            if final_block:
-                log(f"SKIP {row.name}: textarea safety block {final_block}")
                 try:
                     claw.clear_message()
                 except Exception:
                     pass
+                mark_unread_for_manual_check(claw, row, "textarea value mismatch", args.dry_run)
+                continue
+            # Final safety re-check on the actual textarea contents.
+            final_block = safety_block_reason(value)
+            if final_block:
+                log(f"FLAG_HUMAN {row.name}: textarea safety block {final_block}")
+                try:
+                    claw.clear_message()
+                except Exception:
+                    pass
+                human_only.add(row_key)
+                state_dirty = True
+                mark_unread_for_manual_check(claw, row, final_block, args.dry_run)
                 continue
             claw.send_enter()
         except Exception as exc:
             log(f"SKIP {row.name}: send failed: {exc}")
+            mark_unread_for_manual_check(claw, row, f"send failed: {exc}", args.dry_run)
             continue
 
         sent += 1
         processed.add(row_key)
-        processed_dirty = True
+        state_dirty = True
         log(f"SENT {row.name}: {decision.category} | {decision.reply}")
         # Human-like jitter between sends so the cadence doesn't look robotic.
         base = max(0.3, args.after_send_delay)
         time.sleep(base + random.uniform(0, base))
 
-    if processed_dirty and not args.dry_run:
-        save_processed(processed)
+    if state_dirty and not args.dry_run:
+        save_state(processed, human_only)
     return sent
 
 
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Run Gemini-powered Salework UI auto reply bot.")
     parser.add_argument("--profile", default=os.getenv("OPENCLAW_BROWSER_PROFILE", "edgeremote"))
+    parser.add_argument("--lookup-profile", default=DEFAULT_LOOKUP_PROFILE)
     parser.add_argument("--max-send", type=int, default=int(os.getenv("SALEWORK_BOT_MAX_SEND", "30")))
     parser.add_argument("--max-candidates", type=int, default=int(os.getenv("SALEWORK_BOT_MAX_CANDIDATES", "12")))
     parser.add_argument("--poll-seconds", type=float, default=float(os.getenv("SALEWORK_BOT_POLL_SECONDS", "6")))
@@ -1030,20 +1899,22 @@ async def main() -> int:
     load_dotenv(ROOT / ".env")
     prompt_text = PROMPT_PATH.read_text(encoding="utf-8") if PROMPT_PATH.exists() else ""
     processed = load_processed()
+    human_only = load_human_only()
     claw = OpenClaw(args.profile)
+    lookup_claw = OpenClaw(args.lookup_profile) if args.lookup_profile else None
     claw.open_chat()
 
     total_sent = 0
     consecutive_errors = 0
     loops = 0
     log(
-        f"START profile={args.profile} max_send={args.max_send} once={args.once} "
+        f"START profile={args.profile} lookup_profile={args.lookup_profile} max_send={args.max_send} once={args.once} "
         f"dry_run={args.dry_run} gemini={args.use_gemini}"
     )
     while total_sent < args.max_send:
         loops += 1
         try:
-            sent = await process_once(claw, prompt_text, processed, args)
+            sent = await process_once(claw, lookup_claw, prompt_text, processed, human_only, args)
             total_sent += sent
             consecutive_errors = 0
         except Exception as exc:
@@ -1056,6 +1927,11 @@ async def main() -> int:
             time.sleep(backoff)
             if consecutive_errors >= 5:
                 log("WARN reopen chat after repeated errors")
+                try:
+                    log("WARN restart OpenClaw gateway after repeated browser errors")
+                    restart_openclaw_gateway()
+                except Exception as gateway_exc:
+                    log(f"ERROR gateway restart failed: {gateway_exc}")
                 try:
                     claw.open_chat()
                 except Exception as reopen_exc:

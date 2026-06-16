@@ -1,54 +1,65 @@
 # Huong dan dung OpenClaw voi Salework Chat
 
-Muc tieu: dung agent dieu khien trinh duyet de doc tin nhan moi trong Salework Chat va tra loi khach Shopee.
+Muc tieu: dung OpenClaw dieu khien Microsoft Edge de doc danh sach chat Salework va chi auto-reply cac case an toan.
 
-## Nguyen tac an toan
+## Cach chay nhanh
 
-- Chay thu che do soan nhap truoc 1-2 ngay.
-- Chi auto gui cac case don gian: chao hoi, hoi chat lieu, hoi lap rap, hoi tua vit/phu kien, hoi phi ship, hoi thoi gian giao, hoi kich thuoc co trong mo ta.
-- Khong auto gui case rui ro: khieu nai, hoan tien, doi tra, hang loi, thieu hang, don chua nhan, khach buc, yeu cau giam gia/boi thuong.
-- Neu khong chac, chi soan nhap va dung lai de nguoi that kiem tra.
+Chay tai thu muc repo:
 
-## Chuan bi
+```powershell
+powershell -ExecutionPolicy Bypass -File .\RUN_SALEWORK_BOT.ps1
+```
 
-1. Cai Google Chrome hoac Microsoft Edge.
-2. Dang nhap Salework Chat tren trinh duyet.
-3. Dam bao tai khoan khong bat dang nhap lai lien tuc.
-4. Mo file `data/salework_ai_prompt.txt`; day la prompt phong cach tra loi cua shop.
-5. Neu co OpenClaw, tao task moi va dan noi dung trong `openclaw_salework_task.txt`.
+Restart bot dang chay:
 
-## Quy trinh agent can lam
+```powershell
+powershell -ExecutionPolicy Bypass -File .\RUN_SALEWORK_BOT.ps1 -Restart
+```
 
-1. Mo Salework Chat.
-2. Tim hoi thoai chua doc hoac co dau hieu co tin moi.
-3. Mo hoi thoai.
-4. Doc tin nhan moi nhat cua khach va vai tin gan nhat de lay ngu canh.
-5. Khong xu ly neu tin moi nhat la tin cua shop/nhan vien.
-6. Sinh cau tra loi theo `data/salework_ai_prompt.txt`.
-7. Phan loai:
-   - Case de: tu gui neu dang bat auto-send.
-   - Case kho: chi dan vao o nhap hoac ghi chu, khong bam gui.
-8. Sau moi lan gui, cho 2-5 giay va kiem tra tin da xuat hien trong chat.
-9. Chuyen sang hoi thoai tiep theo.
+Dung bot:
 
-## Cach chay khuyen nghi
+```powershell
+.\scripts\stop_salework_gemini_bot.ps1
+```
 
-Ngay 1:
-- Chi cho agent soan nhap, khong bam gui.
-- Ban doc lai 20-50 cau tra loi dau tien.
+## May moi can co
 
-Ngay 2:
-- Cho auto gui case de.
-- Van dung lai o case khieu nai/hoan tien/loi hang/thieu hang.
+- Windows va Microsoft Edge.
+- Python 3.11+.
+- Node.js/npm neu chua co OpenClaw.
+- `.env` co `GEMINI_API_KEY`.
+- Da login Salework trong Edge.
 
-Khi on dinh:
-- Chay agent theo ca truc chat.
-- Moi 30-60 phut kiem tra log va hoi thoai kho.
+Script `RUN_SALEWORK_BOT.ps1` se tu tao `venv`, cai requirements, bat OpenClaw gateway, mo Salework va mo Edge rieng de tra cuu Shopee.
 
-## Can dung ngay neu gap
+## Pham vi bot duoc tu gui
 
-- Salework doi giao dien lam agent khong nhan ra hoi thoai.
-- Agent bam nham hoi thoai/nham nut gui.
-- Khach dang khieu nai hoac tuc gian.
-- Trinh duyet yeu cau dang nhap lai, captcha, OTP.
+- Khach xin video/hdsd/huong dan lap san pham.
+- Khach hoi kich thuoc hoac thong tin nam trong mo ta san pham.
+- Mot so cau thong tin san pham don gian da co rule chac chan.
+
+## Case khong duoc tu tra loi
+
+- Hoan hang, hoan tien, doi tra.
+- Thieu oc, vit, tua vit, phu kien, thieu tam/ngan/chi tiet.
+- Hang loi, vo, gay, sut, me, nut, hong, sai mau.
+- Khach dang buc, that vong, noi uong tien, chat luong kem.
+- Phi, chi phi, phi hu, boi thuong, den bu, so tai khoan, chuyen khoan.
+- Zalo, so dien thoai, Facebook, xu ly ngoai san.
+- Tin co hinh anh, video, file, sticker can nguoi that xem.
+
+Neu lo mo chat nham case khong duoc xu ly, bot phai danh dau lai chua doc neu tim thay nut mat gach/mark unread.
+
+## Log can xem
+
+```powershell
+Get-Content .\openclaw-logs\salework_gemini_bot.stdout.log -Tail 120 -Encoding UTF8
+Get-Content .\openclaw-logs\salework_gemini_bot.stderr.log -Tail 80 -Encoding UTF8
+```
+
+## Khi gap loi
+
+- Neu OpenClaw gateway rot: chay `openclaw gateway restart`.
+- Neu Salework khong doc duoc chat: mo lai `https://chat.salework.net/conversations` trong Edge va login lai.
+- Neu bot gui sai: chay `.\scripts\stop_salework_gemini_bot.ps1`, them rule/test, chay pytest roi moi bat lai.
 

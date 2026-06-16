@@ -4,7 +4,9 @@ param(
     [switch]$Once,
     [switch]$DryRun,
     [switch]$NoGemini,
-    [switch]$Supervised
+    [switch]$Supervised,
+    [string]$Profile = "edgeremote",
+    [string]$LookupProfile = "edgelookup"
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,7 +31,13 @@ if ($Supervised) {
             exit 0
         }
     }
-    $superArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $supervisor, "-MaxSend", "9999", "-PollSeconds", $PollSeconds)
+    $superArgs = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $supervisor,
+        "-MaxSend", "9999",
+        "-PollSeconds", $PollSeconds,
+        "-Profile", $Profile,
+        "-LookupProfile", $LookupProfile
+    )
     if ($DryRun)   { $superArgs += "-DryRun" }
     if ($NoGemini) { $superArgs += "-NoGemini" }
     $superProc = Start-Process `
@@ -52,6 +60,8 @@ if (Test-Path $pidPath) {
 
 $argsList = @(
     $script,
+    "--profile", $Profile,
+    "--lookup-profile", $LookupProfile,
     "--max-send", $MaxSend,
     "--poll-seconds", $PollSeconds
 )

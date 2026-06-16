@@ -69,15 +69,24 @@ Quy tắc xử lý:
 - Nếu khách hỏi câu khớp với tình huống mẫu, hãy trả lời theo ý của mẫu nhưng viết lại tự nhiên theo đúng câu hỏi.
 - Không copy cứng từng chữ nếu câu khách khác ngữ cảnh; hãy giữ ý và phong cách.
 - Không tự bịa giá, tồn kho, phí ship, trạng thái đơn, cam kết đổi trả nếu hệ thống không cung cấp.
-- Với đơn hàng, khiếu nại, lỗi/thiếu hàng: xin ảnh/video/mã đơn nếu cần và nói shop sẽ kiểm tra hỗ trợ.
+- Chỉ tự trả lời các câu hỏi về video hướng dẫn, kích thước hoặc thông tin có trong mô tả sản phẩm. Các case khác để người thật xử lý.
+- Nếu khách gửi hình ảnh/tệp/clip hoặc cuộc hội thoại có ảnh cần kiểm tra: không tự nhắn, để người thật xử lý.
+- Nếu khách hỏi kích thước/mẫu mã, phải tự đọc mã sản phẩm, tên sản phẩm và biến thể đang hiện trong Salework trước. Nếu có dữ liệu chắc chắn thì trả lời trực tiếp; nếu chưa đủ dữ liệu thì để shop kiểm tra, không bắt khách tự xem mô tả/live và không hỏi lại mã đã hiển thị.
+- Với đơn hàng, khiếu nại hoặc lỗi hàng không thuộc nhóm thiếu món/hoàn trả: xin ảnh/video/mã đơn nếu cần và nói shop sẽ kiểm tra hỗ trợ.
 - Nếu khách hỏi phí ship hoặc thời gian giao, nói Shopee sẽ hiển thị theo địa chỉ/mã vận chuyển, shop sẽ cố gắng gửi sớm.
 - Nếu khách bực hoặc gặp lỗi, xin lỗi trước, nhận thiếu sót nhẹ nhàng, rồi đưa bước hỗ trợ cụ thể.
 - Nếu cần khách thao tác trên Shopee, hướng dẫn từng bước ngắn gọn.
+- Trường hợp khách nói về trả hàng, hoàn hàng, hoàn tiền, đổi trả hoặc trả hoàn: không tự nhắn, để người thật xử lý.
+- Trường hợp khách nhắc phí, chi phí, phí hư, tiền, giá, đền bù hoặc bồi thường: không tự nhắn, để người thật xử lý.
 
 Không được:
 - Không nói "tôi là AI" hoặc "AI không thể".
 - Không trả lời khô cứng, không dùng văn mẫu tổng đài.
 - Không hứa hoàn tiền, giảm giá, tặng quà hoặc xử lý ngoài chính sách khi chưa có thông tin chắc chắn.
+- Không bảo khách tự xem phần mô tả sản phẩm, tự vào live, hoặc tự kiểm tra mã/mẫu nếu Salework đã hiện thông tin sản phẩm. Shop phải tự kiểm tra rồi trả lời.
+- Không tự trả lời các case trả hàng/hoàn hàng/hoàn tiền/đổi trả/trả hoàn.
+- Không tự trả lời ngoài phạm vi video/kích thước/thông tin mô tả sản phẩm.
+- Không tự trả lời khi khách gửi ảnh/tệp/clip, nhắc phí/chi phí/tiền/giá/đền bù/bồi thường.
 - Không gửi câu quá dài nếu khách chỉ hỏi một ý đơn giản.
 
 Các tin nhắn mẫu của shop để bắt chước:
@@ -98,6 +107,39 @@ def should_skip(code: str, message: str) -> bool:
         return True
     if "bạn có thể nhập nội dung tin nhắn vào đây" in normalized_message:
         return True
+    human_only_terms = (
+        "hoàn tiền",
+        "hoàn hàng",
+        "trả hàng",
+        "đổi trả",
+        "trả hoàn",
+        "spaylater",
+        "ốc",
+        "vít",
+        "tua vít",
+        "lỗ khoan",
+        "khoan sẵn",
+        "phụ kiện",
+        "thiếu phụ kiện",
+        "thiếu tấm",
+        "thiếu ngăn",
+        "thiếu chi tiết",
+        "thiếu hàng",
+        "giao thiếu",
+        "hình ảnh",
+        "ảnh",
+        "tệp",
+        "clip",
+        "phí",
+        "chi phí",
+        "phí hư",
+        "tiền",
+        "giá",
+        "đền bù",
+        "bồi thường",
+    )
+    if any(term in normalized_code or term in normalized_message for term in human_only_terms):
+        return True
     return False
 
 
@@ -109,4 +151,3 @@ def clean_cell(value: object) -> str:
 
 if __name__ == "__main__":
     main()
-

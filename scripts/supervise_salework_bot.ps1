@@ -4,7 +4,9 @@ param(
     [int]$RestartDelaySeconds = 10,
     [int]$DailyRestartHour = 4,
     [switch]$DryRun,
-    [switch]$NoGemini
+    [switch]$NoGemini,
+    [string]$Profile = "edgeremote",
+    [string]$LookupProfile = "edgelookup"
 )
 
 # Supervisor: keep the Salework UI bot alive 24/7. It re-launches the bot
@@ -52,6 +54,8 @@ try {
     while ($true) {
         $argsList = @(
             $script,
+            "--profile", $Profile,
+            "--lookup-profile", $LookupProfile,
             "--max-send", $MaxSend,
             "--poll-seconds", $PollSeconds
         )

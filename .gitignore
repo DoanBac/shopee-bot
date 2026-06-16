@@ -16,6 +16,7 @@ env/
 # Logs & runtime state
 openclaw-logs/
 openclaw-workspace/
+openclaw-edge-shopee-profile/
 uvicorn*.log
 
 # Test cache
