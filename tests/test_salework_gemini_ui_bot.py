@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from salework_gemini_ui_bot import (
+    answer_from_product_description,
     attachment_related_reason,
     extract_dimension_answer,
     extract_product_context,
@@ -350,6 +351,20 @@ def test_extract_dimension_answer_from_description():
     assert "75cm" in height
 
     assert extract_dimension_answer("Giá: 299.000đ", "kích thước") is None
+
+
+def test_product_lookup_ignores_search_result_noise_for_shelf_comparison():
+    text = "Search result for 'ND40 Ke sach goc tuong nhieu tang, ke da nang lap ghep co HAU FULL chat lieu go MDF phu Melamine ND40'"
+    question = "chieu dai cac ngan cua ke 5 tang nay ngan hon chieu dai cac ngan cua ke 4 tang phai ko"
+
+    assert answer_from_product_description(text, question) is None
+
+
+def test_product_lookup_does_not_answer_comparative_dimension_from_single_size():
+    text = "Mo ta san pham\nKich thuoc: 60 x 30 x 120cm\nChat lieu MDF"
+    question = "chieu dai cac ngan cua ke 5 tang ngan hon ke 4 tang phai khong"
+
+    assert answer_from_product_description(text, question) is None
 
 
 def test_shorten_reply_caps_length():

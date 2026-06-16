@@ -694,6 +694,23 @@ def is_dimension_question(text: str) -> bool:
     )
 
 
+def is_comparative_dimension_question(text: str) -> bool:
+    t = norm(text)
+    if not is_dimension_question(t):
+        return False
+    return any(
+        term in t
+        for term in (
+            "hon",
+            "so voi",
+            "khac",
+            "bang",
+            "giong",
+            "nhu nhau",
+        )
+    )
+
+
 def is_product_info_request(text: str) -> bool:
     t = norm(text)
     if is_video_request(t) or is_dimension_question(t):
@@ -1143,11 +1160,31 @@ def line_has_price_or_policy(line: str) -> bool:
     )
 
 
+def line_is_description_noise(line: str) -> bool:
+    normalized = norm(line)
+    return any(
+        term in normalized
+        for term in (
+            "search result for",
+            "search results for",
+            "ket qua tim kiem",
+            "tim thay ket qua",
+            "dang nhap",
+            "dang ky",
+            "gio hang",
+        )
+    )
+
+
+def usable_description_line(line: str) -> bool:
+    return bool(line) and not line_has_price_or_policy(line) and not line_is_description_noise(line)
+
+
 def extract_dimension_answer(description_text: str, question: str = "") -> str | None:
     fixed = fix_mojibake(description_text)
     q = norm(question)
     lines = [clean_description_line(line) for line in fixed.splitlines()]
-    lines = [line for line in lines if line and not line_has_price_or_policy(line)]
+    lines = [line for line in lines if usable_description_line(line)]
     scope = "\n".join(lines)
 
     if "cao" in q:
@@ -1192,7 +1229,7 @@ def extract_description_fact_answer(description_text: str, question: str) -> str
     q = norm(question)
     fixed = fix_mojibake(description_text)
     lines = [clean_description_line(line) for line in fixed.splitlines()]
-    lines = [line for line in lines if line and not line_has_price_or_policy(line)]
+    lines = [line for line in lines if usable_description_line(line)]
 
     topic_terms: tuple[str, ...]
     if any(term in q for term in ("chat lieu", "go gi", "go loai", "mdf", "melamine")):
@@ -1218,6 +1255,8 @@ def extract_description_fact_answer(description_text: str, question: str) -> str
 
 
 def answer_from_product_description(description_text: str, question: str) -> str | None:
+    if is_comparative_dimension_question(question):
+        return None
     if is_dimension_question(question):
         answer = extract_dimension_answer(description_text, question)
         if answer:
