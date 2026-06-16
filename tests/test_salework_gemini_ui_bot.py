@@ -300,6 +300,31 @@ def test_video_request_detection_common_customer_phrases():
         assert decision.category == "assembly_video"
 
 
+def test_nd90_video_request_uses_direct_product_video():
+    decision = quick_decision(
+        "shop gửi mình video hướng dẫn lắp với",
+        "Thông tin đơn hàng\nTủ giày lắp ghép nội thất TAGO ND90\nGiá : 299.000đ",
+    )
+
+    assert decision is not None
+    assert decision.action == "send"
+    assert decision.category == "assembly_video"
+    assert "https://www.youtube.com/watch?v=HCU50Y-7tIg" in decision.reply
+    assert "@TagoFurniture2412" not in decision.reply
+
+
+def test_nd90_self_assembly_uses_direct_product_video():
+    decision = quick_decision(
+        "mẫu này có tự lắp không",
+        "Thông tin đơn hàng\nTủ giày lắp ghép nội thất TAGO ND90\nGiá : 299.000đ",
+    )
+
+    assert decision is not None
+    assert decision.action == "send"
+    assert decision.category == "self_assembly"
+    assert "https://www.youtube.com/watch?v=HCU50Y-7tIg" in decision.reply
+
+
 def test_send_reference_preview_opens_only_for_recent_video_context():
     assert is_send_reference_request("Shop gửi qua đây giúp mình với")
     assert preview_skip_reason("Shop gửi qua đây giúp mình với") is None

@@ -31,6 +31,9 @@ URL = "https://chat.salework.net/conversations"
 MAX_REPLY_CHARS = 280
 DEFAULT_LOOKUP_PROFILE = os.getenv("OPENCLAW_LOOKUP_BROWSER_PROFILE", "edgelookup")
 YOUTUBE_GUIDE_URL = "https://www.youtube.com/@TagoFurniture2412"
+PRODUCT_VIDEO_URLS = {
+    "ND90": "https://www.youtube.com/watch?v=HCU50Y-7tIg",
+}
 LOOKUP_NEEDED_CATEGORIES = {
     "dimension_visible_but_unknown",
     "dimension_no_product_context",
@@ -1055,6 +1058,23 @@ def variant_seed(row_name: str) -> str:
     return f"{row_name}|{datetime.now().strftime('%Y%m%d')}"
 
 
+def product_video_url(code: str | None) -> str | None:
+    return PRODUCT_VIDEO_URLS.get((code or "").upper())
+
+
+def assembly_video_reply(code: str | None, *, self_assembly: bool = False) -> str:
+    direct_url = product_video_url(code)
+    if direct_url and code:
+        if self_assembly:
+            return (
+                f"Dạ mẫu này là dạng tự lắp ạ. Mình xem video hướng dẫn lắp mẫu {code} ở đây giúp em nha: {direct_url}"
+            )
+        return f"Dạ mẫu này mã {code}, mình xem video hướng dẫn lắp đúng mẫu ở đây giúp em nha: {direct_url}"
+    if code:
+        return f"Dạ mẫu này mã {code}, mình xem video hướng dẫn của shop ở đây giúp em nha: {YOUTUBE_GUIDE_URL}"
+    return f"Dạ mình xem video hướng dẫn của shop ở đây giúp em nha: {YOUTUBE_GUIDE_URL}"
+
+
 def extract_product_code(text: str) -> str | None:
     match = re.search(r"\b(?:TAGO\s*)?(ND\d{1,3})\b", text, flags=re.IGNORECASE)
     if match:
@@ -1364,12 +1384,7 @@ def quick_decision(
     if is_video_request(t) or (
         (is_send_reference_request(t) or is_short_followup_request(t)) and context_video_request
     ):
-        if code:
-            reply = (
-                f"Dạ mẫu này mã {code}, mình xem video hướng dẫn của shop ở đây giúp em nha: {YOUTUBE_GUIDE_URL}"
-            )
-        else:
-            reply = f"Dạ mình xem video hướng dẫn của shop ở đây giúp em nha: {YOUTUBE_GUIDE_URL}"
+        reply = assembly_video_reply(code)
         return Decision("send", reply, "assembly_video", "assembly/video request", 0.9)
 
     if is_send_reference_request(t):
@@ -1394,6 +1409,14 @@ def quick_decision(
         return Decision("send", pick_variant("material_wood", s), "material_wood", "material question", 0.85)
 
     if any(word in t for word in ["tu lap", "tu rap", "lap san chua", "co lap san chua", "co lap san khong", "co lap san k"]):
+        if product_video_url(code):
+            return Decision(
+                "send",
+                assembly_video_reply(code, self_assembly=True),
+                "self_assembly",
+                "self-assembly question with product video",
+                0.88,
+            )
         return Decision("send", pick_variant("self_assembly", s), "self_assembly", "self-assembly question", 0.85)
 
     if any(word in t for word in ["goc", "bo tron", "nhon"]):
